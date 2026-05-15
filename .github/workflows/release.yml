@@ -1,0 +1,47 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  release:
+    name: Create Release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Get tag version
+        id: get_version
+        run: echo "VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+
+      - name: Update version in manifest.json
+        run: |
+          VERSION=${{ steps.get_version.outputs.VERSION }}
+          VERSION_NUM=${VERSION#v}
+          sed -i "s/\"version\": \".*\"/\"version\": \"${VERSION_NUM}\"/" custom_components/pihole_bypass/manifest.json
+          echo "Updated manifest.json to version ${VERSION_NUM}"
+
+      - name: Create release zip
+        run: |
+          zip -r pihole-bypass-${{ steps.get_version.outputs.VERSION }}.zip \
+            custom_components/ \
+            www/ \
+            README.md \
+            hacs.json \
+            -x "*.pyc" -x "__pycache__/*"
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.get_version.outputs.VERSION }}
+          name: PiHole Bypass ${{ steps.get_version.outputs.VERSION }}
+          draft: false
+          prerelease: false
+          files: |
+            pihole-bypass-${{ steps.get_version.outputs.VERSION }}.zip
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
