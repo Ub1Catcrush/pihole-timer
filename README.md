@@ -1,4 +1,4 @@
-# 🛡️ PiHole Bypass für Home Assistant
+# 🛡️ PiHole Timed Bypass für Home Assistant
 
 [![HACS Custom][hacs-badge]][hacs-url]
 [![GitHub Release][release-badge]][release-url]
@@ -7,7 +7,7 @@
 
 Eine Home Assistant Custom Integration mit Lovelace Card zum **temporären Umgehen der PiHole-Filterung** für einzelne Clients – mit automatischer Wiederherstellung nach Timer-Ablauf.
 
-![PiHole Bypass Card Screenshot](https://raw.githubusercontent.com/YOUR_GITHUB_USERNAME/pihole-bypass-ha/main/docs/screenshot.png)
+![PiHole Bypass Card Screenshot](https://raw.githubusercontent.com/Ub1Catcrush/pihole-timer/main/docs/screenshot.png)
 
 ---
 
@@ -31,7 +31,7 @@ Eine Home Assistant Custom Integration mit Lovelace Card zum **temporären Umgeh
 
 1. HACS in Home Assistant öffnen
 2. Oben rechts: **⋮ → Custom repositories**
-3. Repository URL eingeben: `https://github.com/YOUR_GITHUB_USERNAME/pihole-bypass-ha`
+3. Repository URL eingeben: `https://github.com/Ub1Catcrush/pihole-timer`
 4. Kategorie: **Integration**
 5. **Add** klicken
 
@@ -193,11 +193,11 @@ automation:
 
 [hacs-badge]: https://img.shields.io/badge/HACS-Custom-orange.svg
 [hacs-url]: https://hacs.xyz
-[release-badge]: https://img.shields.io/github/release/YOUR_GITHUB_USERNAME/pihole-bypass-ha.svg
-[release-url]: https://github.com/YOUR_GITHUB_USERNAME/pihole-bypass-ha/releases
-[license-badge]: https://img.shields.io/github/license/YOUR_GITHUB_USERNAME/pihole-bypass-ha.svg
-[license-url]: https://github.com/YOUR_GITHUB_USERNAME/pihole-bypass-ha/blob/main/LICENSE
-[validate-badge]: https://github.com/YOUR_GITHUB_USERNAME/pihole-bypass-ha/actions/workflows/validate.yml/badge.svg
-[validate-url]: https://github.com/YOUR_GITHUB_USERNAME/pihole-bypass-ha/actions/workflows/validate.yml
+[release-badge]: https://img.shields.io/github/release/Ub1Catcrush/pihole-timer.svg
+[release-url]: https://github.com/Ub1Catcrush/pihole-timer/releases
+[license-badge]: https://img.shields.io/github/license/Ub1Catcrush/pihole-timer.svg
+[license-url]: https://github.com/Ub1Catcrush/pihole-timer/blob/main/LICENSE
+[validate-badge]: https://github.com/Ub1Catcrush/pihole-timer/actions/workflows/validate.yml/badge.svg
+[validate-url]: https://github.com/Ub1Catcrush/pihole-timer/actions/workflows/validate.yml
 [hacs-install-badge]: https://my.home-assistant.io/badges/hacs_repository.svg
-[hacs-install-url]: https://my.home-assistant.io/redirect/hacs_repository/?owner=YOUR_GITHUB_USERNAME&repository=pihole-bypass-ha&category=integration
+[hacs-install-url]: https://my.home-assistant.io/redirect/hacs_repository/?owner=Ub1Catcrush&repository=pihole-timer&category=integration
