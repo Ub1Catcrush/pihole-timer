@@ -3,19 +3,17 @@ from __future__ import annotations
 
 import aiohttp
 import voluptuous as vol
-from typing import Any
 
 from homeassistant import config_entries
-from homeassistant.const import CONF_HOST, CONF_API_KEY, CONF_NAME
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
-from . import DOMAIN
+DOMAIN = "pihole_bypass"
 
 STEP_USER_DATA_SCHEMA = vol.Schema(
     {
-        vol.Required(CONF_NAME, default="PiHole"): str,
-        vol.Required(CONF_HOST, description={"suggested_value": "192.168.1.x"}): str,
-        vol.Required(CONF_API_KEY): str,
+        vol.Required("name", default="PiHole"): str,
+        vol.Required("host"): str,
+        vol.Required("api_key"): str,
     }
 )
 
@@ -25,49 +23,36 @@ class PiHoleBypassConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
     VERSION = 1
 
-    async def async_step_user(
-        self, user_input: dict[str, Any] | None = None
-    ) -> config_entries.FlowResult:
+    async def async_step_user(self, user_input=None):
         """Handle the initial step."""
         errors: dict[str, str] = {}
 
         if user_input is not None:
-            # Validate connection
-            error = await self._test_connection(
-                user_input[CONF_HOST], user_input[CONF_API_KEY]
-            )
+            error = await self._test_connection(user_input["host"], user_input["api_key"])
             if error:
                 errors["base"] = error
             else:
                 return self.async_create_entry(
-                    title=user_input[CONF_NAME],
-                    data={
-                        "name": user_input[CONF_NAME],
-                        "host": user_input[CONF_HOST],
-                        "api_key": user_input[CONF_API_KEY],
-                    },
+                    title=user_input["name"],
+                    data=user_input,
                 )
 
         return self.async_show_form(
             step_id="user",
             data_schema=STEP_USER_DATA_SCHEMA,
             errors=errors,
-            description_placeholders={
-                "docs_url": "https://docs.pi-hole.net/api/"
-            },
         )
 
-    async def _test_connection(self, host: str, api_key: str) -> str | None:
-        """Test connection to PiHole API."""
+    async def _test_connection(self, host: str, password: str) -> str | None:
+        """Return error key or None on success."""
         session = async_get_clientsession(self.hass)
         if not host.startswith("http"):
             host = f"http://{host}"
         url = f"{host.rstrip('/')}/api/auth"
-
         try:
             async with session.post(
                 url,
-                json={"password": api_key},
+                json={"password": password},
                 timeout=aiohttp.ClientTimeout(total=10),
             ) as resp:
                 if resp.status == 200:
@@ -75,13 +60,10 @@ class PiHoleBypassConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     if data.get("session", {}).get("valid"):
                         return None
                     return "invalid_auth"
-                elif resp.status == 401:
+                if resp.status == 401:
                     return "invalid_auth"
-                else:
-                    return "cannot_connect"
+                return "cannot_connect"
         except aiohttp.ClientConnectorError:
-            return "cannot_connect"
-        except aiohttp.ClientError:
             return "cannot_connect"
         except Exception:
             return "unknown"
@@ -92,15 +74,12 @@ class PiHoleBypassConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
 
 class PiHoleBypassOptionsFlow(config_entries.OptionsFlow):
-    """Handle options flow."""
+    """Handle options."""
 
-    def __init__(self, config_entry: config_entries.ConfigEntry) -> None:
+    def __init__(self, config_entry):
         self.config_entry = config_entry
 
-    async def async_step_init(
-        self, user_input: dict[str, Any] | None = None
-    ) -> config_entries.FlowResult:
-        """Manage options."""
+    async def async_step_init(self, user_input=None):
         if user_input is not None:
             return self.async_create_entry(title="", data=user_input)
 
