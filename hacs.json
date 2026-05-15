@@ -1,0 +1,8 @@
+{
+  "name": "PiHole Bypass",
+  "content_in_root": false,
+  "render_readme": true,
+  "domains": ["automation"],
+  "homeassistant": "2023.1.0",
+  "filename": "pihole-bypass-card.js"
+}
