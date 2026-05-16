@@ -4,13 +4,14 @@ from __future__ import annotations
 import logging
 import asyncio
 import aiohttp
+import pathlib
 from datetime import datetime, timedelta
 
 from homeassistant.core import HomeAssistant
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers import storage
-from homeassistant.components.http import HomeAssistantView
+from homeassistant.components.http import HomeAssistantView, StaticPathConfig
 from homeassistant.util import dt as dt_util
 from aiohttp import web
 
@@ -20,12 +21,16 @@ DOMAIN = "pihole_timer"
 STORAGE_KEY = f"{DOMAIN}.timers"
 STORAGE_VERSION = 1
 CARD_VERSION = "0.1.2"
+CARD_FILENAME = "pihole-bypass-card.js"
 
-# HACS serves www/ from the repo root at /hacsfiles/<repo-name>/
-# The repo is named "pihole-timer", so the card is at:
-CARD_URL = "/hacsfiles/pihole-timer/pihole-bypass-card.js"
+# URL under which HA will serve the card JS file.
+# We register a static path ourselves so this works regardless of HACS.
+CARD_URL = f"/{DOMAIN}/{CARD_FILENAME}"
 
 LOVELACE_RESOURCES_STORAGE_KEY = "lovelace_resources"
+
+# Track whether we already registered the static path / module URL this run
+_CARD_REGISTERED: bool = False
 
 
 async def async_setup(hass: HomeAssistant, config: dict) -> bool:
@@ -41,8 +46,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     await coordinator.async_initialize()
 
-    # Clean up duplicate/stale Lovelace resource entries and ensure correct one exists
-    await _async_fix_lovelace_resource(hass)
+    # Register the card JS as a static file and tell HA's frontend about it.
+    # This works for both HACS and manual installs, and in YAML + Storage mode.
+    await _async_register_card(hass)
 
     # REST API for the card
     hass.http.register_view(PiHoleBypassView(coordinator))
@@ -50,8 +56,64 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     return True
 
 
-async def _async_fix_lovelace_resource(hass: HomeAssistant) -> None:
-    """Remove all stale card resource entries and ensure exactly one correct entry."""
+async def _async_register_card(hass: HomeAssistant) -> None:
+    """Serve the card JS and register it with HA's frontend module loader.
+
+    Uses homeassistant.components.frontend.async_register_extra_module_url —
+    the official API for this purpose. Also registers a static HTTP path so
+    the file is reachable regardless of HACS being present.
+
+    Safe to call on every config-entry setup; registration is idempotent.
+    """
+    global _CARD_REGISTERED  # noqa: PLW0603
+
+    # Locate the JS file (lives next to this __init__.py in www/)
+    www_dir = pathlib.Path(__file__).parent / "www"
+    js_path = www_dir / CARD_FILENAME
+
+    if not js_path.is_file():
+        _LOGGER.error(
+            "Card JS not found at %s — card will not be available", js_path
+        )
+        return
+
+    if not _CARD_REGISTERED:
+        # Register a static HTTP route: GET /<DOMAIN>/pihole-bypass-card.js
+        try:
+            await hass.http.async_register_static_paths(
+                [StaticPathConfig(CARD_URL, str(js_path), cache_headers=False)]
+            )
+            _LOGGER.debug("Registered static path %s → %s", CARD_URL, js_path)
+        except Exception as err:  # noqa: BLE001
+            # Already registered on a previous setup call — harmless.
+            _LOGGER.debug("Static path registration skipped: %s", err)
+
+        # Register with HA frontend so it loads the module on every page load.
+        # This is equivalent to adding the resource via the UI, but survives
+        # YAML-mode Lovelace and does not leave orphaned storage entries.
+        try:
+            from homeassistant.components import frontend
+            frontend.async_register_extra_module_url(
+                hass, f"{CARD_URL}?v={CARD_VERSION}"
+            )
+            _LOGGER.info(
+                "PiHole card registered as frontend module: %s?v=%s",
+                CARD_URL, CARD_VERSION,
+            )
+        except Exception as err:  # noqa: BLE001
+            _LOGGER.warning("Could not register card with frontend module API: %s", err)
+            # Fallback: write into lovelace_resources storage
+            await _async_fix_lovelace_resource_fallback(hass)
+
+        _CARD_REGISTERED = True
+
+
+async def _async_fix_lovelace_resource_fallback(hass: HomeAssistant) -> None:
+    """Fallback: write the resource entry directly into lovelace_resources storage.
+
+    Only called when frontend.async_register_extra_module_url is unavailable
+    (very old HA versions). Uses a stable domain-scoped id to stay idempotent.
+    """
     store = storage.Store(hass, 1, LOVELACE_RESOURCES_STORAGE_KEY)
     try:
         data = await store.async_load() or {}
@@ -60,20 +122,18 @@ async def _async_fix_lovelace_resource(hass: HomeAssistant) -> None:
 
     items: list[dict] = data.get("items", [])
 
-    # Remove every entry that mentions our card (any URL variant from previous versions)
+    # Remove any stale entries from previous versions / URL schemes
     keywords = ("pihole-bypass-card", "pihole_timer", "pihole_bypass")
     clean = [
         item for item in items
         if not any(kw in item.get("url", "") for kw in keywords)
     ]
-
     removed = len(items) - len(clean)
     if removed:
         _LOGGER.info("Removed %d stale PiHole card resource entries", removed)
 
-    # Add the single correct entry
     clean.append({
-        "id": str(len(clean) + 1),
+        "id": f"{DOMAIN}_card",
         "type": "module",
         "url": f"{CARD_URL}?v={CARD_VERSION}",
     })
@@ -81,13 +141,17 @@ async def _async_fix_lovelace_resource(hass: HomeAssistant) -> None:
     data["items"] = clean
     await store.async_save(data)
     hass.bus.async_fire("lovelace_updated")
-    _LOGGER.info("PiHole card resource set to %s", CARD_URL)
+    _LOGGER.info("PiHole card resource set via storage fallback: %s?v=%s", CARD_URL, CARD_VERSION)
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+    global _CARD_REGISTERED  # noqa: PLW0603
     coordinator = hass.data[DOMAIN].pop(entry.entry_id, None)
     if coordinator:
         await coordinator.async_cleanup()
+    # Reset so the card re-registers if the integration is reloaded
+    if not hass.data.get(DOMAIN):
+        _CARD_REGISTERED = False
     return True
 
 

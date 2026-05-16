@@ -15,9 +15,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          # Use a token that can push to protected branches
           token: ${{ secrets.GITHUB_TOKEN }}
-          # Fetch full history so we can push the commit back
           fetch-depth: 0
 
       - name: Extract version from tag
@@ -35,7 +33,7 @@ jobs:
           # 1. VERSION file
           echo "$V" > VERSION
 
-          # 2. manifest.json anpassen
+          # 2. manifest.json
           sed -i "s/\"version\": \".*\"/\"version\": \"${V}\"/" \
             custom_components/pihole_timer/manifest.json
 
@@ -43,13 +41,30 @@ jobs:
           sed -i "s/^CARD_VERSION = \".*\"/CARD_VERSION = \"$V\"/" \
             custom_components/pihole_timer/__init__.py
 
-          # 4. Both card JS files
+          # 4. Both card JS files (version string in console banner)
           sed -i "s/v[0-9]\+\.[0-9]\+\.[0-9]\+/v$V/g" \
             custom_components/pihole_timer/www/pihole-bypass-card.js
           sed -i "s/v[0-9]\+\.[0-9]\+\.[0-9]\+/v$V/g" \
             www/pihole-bypass-card.js
 
-          echo "All files stamped with $V"
+          # 5. Verify all files are consistent
+          echo "--- Verification ---"
+          echo "VERSION file:     $(cat VERSION)"
+          echo "manifest.json:    $(grep '\"version\"' custom_components/pihole_timer/manifest.json)"
+          echo "__init__.py:      $(grep '^CARD_VERSION' custom_components/pihole_timer/__init__.py)"
+          echo "JS (components):  $(grep 'PIHOLE-BYPASS-CARD' custom_components/pihole_timer/www/pihole-bypass-card.js | head -1)"
+          echo "JS (www):         $(grep 'PIHOLE-BYPASS-CARD' www/pihole-bypass-card.js | head -1)"
+
+          # Fail if any file still has a different version
+          grep -q "\"version\": \"${V}\"" custom_components/pihole_timer/manifest.json \
+            || (echo "ERROR: manifest.json version mismatch!" && exit 1)
+          grep -q "^CARD_VERSION = \"${V}\"" custom_components/pihole_timer/__init__.py \
+            || (echo "ERROR: __init__.py CARD_VERSION mismatch!" && exit 1)
+          grep -q "v${V}" custom_components/pihole_timer/www/pihole-bypass-card.js \
+            || (echo "ERROR: JS (custom_components) version mismatch!" && exit 1)
+          grep -q "v${V}" www/pihole-bypass-card.js \
+            || (echo "ERROR: JS (www) version mismatch!" && exit 1)
+          echo "All files consistently stamped with $V"
 
       - name: Commit version bump back to repo
         run: |
@@ -65,12 +80,10 @@ jobs:
             custom_components/pihole_timer/www/pihole-bypass-card.js \
             www/pihole-bypass-card.js
 
-          # Only commit if something actually changed
           if git diff --cached --quiet; then
             echo "Nothing to commit (files already at $V)"
           else
             git commit -m "chore: stamp version $V [skip ci]"
-            # Push to the branch the tag points to (usually main/master)
             git push origin HEAD:$(git remote show origin | grep 'HEAD branch' | awk '{print $NF}')
             echo "Version commit pushed"
           fi
