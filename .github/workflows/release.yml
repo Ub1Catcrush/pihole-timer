@@ -9,6 +9,10 @@ jobs:
   release:
     name: Create Release
     runs-on: ubuntu-latest
+
+    permissions:
+      contents: write # Ermöglicht das Generieren von Notizen und Erstellen von Releases
+
     steps:
       - uses: actions/checkout@v4
 
