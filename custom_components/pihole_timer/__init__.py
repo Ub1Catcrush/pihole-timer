@@ -20,7 +20,7 @@ _LOGGER = logging.getLogger(__name__)
 DOMAIN = "pihole_timer"
 STORAGE_KEY = f"{DOMAIN}.timers"
 STORAGE_VERSION = 1
-CARD_VERSION = "0.1.8"
+CARD_VERSION = "0.1.9"
 CARD_FILENAME = "pihole-bypass-card.js"
 
 # URL under which HA will serve the card JS file.
