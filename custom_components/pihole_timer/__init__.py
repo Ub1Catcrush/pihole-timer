@@ -44,14 +44,28 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     coordinator = PiHoleBypassCoordinator(hass, entry)
     hass.data[DOMAIN][entry.entry_id] = coordinator
 
-    await coordinator.async_initialize()
+    try:
+        await coordinator.async_initialize()
+    except Exception as err:  # noqa: BLE001
+        _LOGGER.exception("Failed to initialize coordinator: %s", err)
+        return False
 
-    # Register the card JS as a static file and tell HA's frontend about it.
-    # This works for both HACS and manual installs, and in YAML + Storage mode.
-    await _async_register_card(hass)
+    try:
+        await _async_register_card(hass)
+    except Exception as err:  # noqa: BLE001
+        # Card registration failure is non-fatal — integration still works.
+        _LOGGER.error("Card registration failed: %s", err)
 
-    # REST API for the card
-    hass.http.register_view(PiHoleBypassView(coordinator))
+    # REST API for the card.
+    # register_view raises if the URL is already registered (e.g. on reload),
+    # so we guard with a flag stored in hass.data. The view looks up the active
+    # coordinator dynamically via hass.data so it always uses the current one.
+    if not hass.data[DOMAIN].get("_view_registered"):
+        try:
+            hass.http.register_view(PiHoleBypassView(hass))
+            hass.data[DOMAIN]["_view_registered"] = True
+        except Exception as err:  # noqa: BLE001
+            _LOGGER.error("Failed to register API view: %s", err)
 
     return True
 
@@ -149,8 +163,11 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     coordinator = hass.data[DOMAIN].pop(entry.entry_id, None)
     if coordinator:
         await coordinator.async_cleanup()
-    # Reset so the card re-registers if the integration is reloaded
-    if not hass.data.get(DOMAIN):
+    # When the last entry is unloaded, reset registration flags so everything
+    # re-registers cleanly if the integration is set up again in this session.
+    remaining = [k for k in hass.data.get(DOMAIN, {}) if k not in ("_view_registered",)]
+    if not remaining:
+        hass.data[DOMAIN].pop("_view_registered", None)
         _CARD_REGISTERED = False
     return True
 
@@ -357,35 +374,55 @@ class PiHoleBypassCoordinator:
 
 
 class PiHoleBypassView(HomeAssistantView):
+    """REST API consumed by the Lovelace card.
+
+    Looks up the active coordinator from hass.data on every request so the
+    view stays valid across reloads without needing to re-register its URL.
+    """
+
     url = "/api/pihole_timer/{action}"
     name = "api:pihole_timer"
     requires_auth = True
 
-    def __init__(self, coordinator: PiHoleBypassCoordinator) -> None:
-        self.coordinator = coordinator
+    def __init__(self, hass: HomeAssistant) -> None:
+        self._hass = hass
+
+    def _coordinator(self) -> PiHoleBypassCoordinator | None:
+        """Return the first active coordinator, or None."""
+        domain_data = self._hass.data.get(DOMAIN, {})
+        for key, value in domain_data.items():
+            if isinstance(value, PiHoleBypassCoordinator):
+                return value
+        return None
 
     async def get(self, request: web.Request, action: str) -> web.Response:
+        coordinator = self._coordinator()
+        if coordinator is None:
+            return self.json_message("Integration not loaded", status_code=503)
         if action == "clients":
-            return self.json({"clients": await self.coordinator.get_clients()})
+            return self.json({"clients": await coordinator.get_clients()})
         if action == "groups":
-            return self.json({"groups": await self.coordinator.get_groups()})
+            return self.json({"groups": await coordinator.get_groups()})
         if action == "timers":
-            return self.json({"timers": await self.coordinator.get_active_timers()})
+            return self.json({"timers": await coordinator.get_active_timers()})
         return self.json_message("Unknown action", status_code=404)
 
     async def post(self, request: web.Request, action: str) -> web.Response:
+        coordinator = self._coordinator()
+        if coordinator is None:
+            return self.json_message("Integration not loaded", status_code=503)
         try:
             data = await request.json()
         except Exception:
             return self.json_message("Invalid JSON", status_code=400)
         if action == "activate":
-            ok = await self.coordinator.activate_bypass(
+            ok = await coordinator.activate_bypass(
                 client_ip=data.get("client_ip"),
                 groups=data.get("groups", []),
                 duration_minutes=int(data.get("duration_minutes", 10)),
             )
             return self.json({"success": ok})
         if action == "deactivate":
-            ok = await self.coordinator.deactivate_bypass(data.get("client_ip"))
+            ok = await coordinator.deactivate_bypass(data.get("client_ip"))
             return self.json({"success": ok})
         return self.json_message("Unknown action", status_code=404)
