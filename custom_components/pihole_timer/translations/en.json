@@ -3,21 +3,32 @@
     "step": {
       "user": {
         "title": "Configure PiHole Bypass",
-        "description": "Connect to your PiHole server (v6+). Find the API password under Settings > API in the PiHole web interface.",
+        "description": "Connect to your PiHole server (v6+). Find the API key under Settings > API in the PiHole web interface.",
         "data": {
           "name": "Name",
           "host": "Host (IP or hostname)",
-          "api_key": "API Password"
+          "api_key": "API password"
+        }
+      },
+      "reconfigure": {
+        "title": "Reconfigure PiHole Bypass",
+        "description": "Update the host or API password.",
+        "data": {
+          "host": "Host (IP or hostname)",
+          "api_key": "API password"
         }
       }
     },
     "error": {
       "cannot_connect": "Failed to connect to PiHole server",
       "invalid_auth": "Invalid API password",
-      "unknown": "Unknown error"
+      "unknown": "Unexpected error",
+      "api_clients_unavailable": "Connected, but /api/clients is unavailable – is PiHole v6 running?",
+      "api_groups_unavailable": "Connected, but /api/groups is unavailable – is PiHole v6 running?"
     },
     "abort": {
-      "already_configured": "PiHole is already configured"
+      "already_configured": "PiHole is already configured",
+      "reconfigure_successful": "Configuration updated successfully"
     }
   },
   "options": {

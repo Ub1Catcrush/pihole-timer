@@ -44,6 +44,39 @@ class PiHoleBypassConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             errors=errors,
         )
 
+    async def async_step_reconfigure(self, user_input=None):
+        """Allow the user to change host and API key after initial setup."""
+        errors: dict[str, str] = {}
+
+        if user_input is not None:
+            error = await self._test_connection(
+                user_input["host"], user_input["api_key"]
+            )
+            if error:
+                errors["base"] = error
+            else:
+                self.hass.config_entries.async_update_entry(
+                    self._get_reconfigure_entry(),
+                    data={
+                        **self._get_reconfigure_entry().data,
+                        "host": user_input["host"],
+                        "api_key": user_input["api_key"],
+                    },
+                )
+                return self.async_abort(reason="reconfigure_successful")
+
+        entry = self._get_reconfigure_entry()
+        return self.async_show_form(
+            step_id="reconfigure",
+            data_schema=vol.Schema(
+                {
+                    vol.Required("host", default=entry.data.get("host", "")): str,
+                    vol.Required("api_key", default=entry.data.get("api_key", "")): str,
+                }
+            ),
+            errors=errors,
+        )
+
     async def _test_connection(self, host: str, password: str) -> str | None:
         """Return an error key string, or None on success."""
         session = async_get_clientsession(self.hass)
@@ -58,16 +91,43 @@ class PiHoleBypassConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             ) as resp:
                 if resp.status == 200:
                     data = await resp.json()
-                    if data.get("session", {}).get("valid"):
-                        return None
-                    return "invalid_auth"
-                if resp.status == 401:
-                    return "invalid_auth"
-                return "cannot_connect"
+                    session_data = data.get("session", {})
+                    if not session_data.get("valid"):
+                        return "invalid_auth"
+                    sid = session_data.get("sid")
+                else:
+                    return "invalid_auth" if resp.status == 401 else "cannot_connect"
         except aiohttp.ClientConnectorError:
             return "cannot_connect"
         except Exception:  # noqa: BLE001
             return "unknown"
+
+        # Auth succeeded — now verify the client and group API endpoints work.
+        base = host.rstrip("/")
+        headers = {"sid": sid}
+        for endpoint, error_key in (
+            ("clients", "api_clients_unavailable"),
+            ("groups", "api_groups_unavailable"),
+        ):
+            try:
+                async with session.get(
+                    f"{base}/api/{endpoint}",
+                    headers=headers,
+                    timeout=aiohttp.ClientTimeout(total=10),
+                ) as resp:
+                    if resp.status == 401:
+                        return "invalid_auth"
+                    if resp.status != 200:
+                        return error_key
+                    payload = await resp.json()
+                    if endpoint not in payload:
+                        return error_key
+            except aiohttp.ClientConnectorError:
+                return "cannot_connect"
+            except Exception:  # noqa: BLE001
+                return error_key
+
+        return None
 
     @staticmethod
     @config_entries.callback
@@ -77,7 +137,7 @@ class PiHoleBypassConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
 
 class PiHoleBypassOptionsFlow(config_entries.OptionsFlow):
-    """Options flow — no __init__ args needed; self.config_entry is set by HA."""
+    """Options flow for adjustable defaults."""
 
     async def async_step_init(self, user_input=None):
         if user_input is not None:

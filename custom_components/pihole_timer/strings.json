@@ -9,15 +9,26 @@
           "host": "Host (IP oder Hostname)",
           "api_key": "API Passwort"
         }
+      },
+      "reconfigure": {
+        "title": "PiHole Bypass neu konfigurieren",
+        "description": "Host oder API-Passwort ändern.",
+        "data": {
+          "host": "Host (IP oder Hostname)",
+          "api_key": "API Passwort"
+        }
       }
     },
     "error": {
       "cannot_connect": "Verbindung zum PiHole Server fehlgeschlagen",
       "invalid_auth": "Ungültiges API Passwort",
-      "unknown": "Unbekannter Fehler"
+      "unknown": "Unbekannter Fehler",
+      "api_clients_unavailable": "Verbindung ok, aber /api/clients nicht erreichbar – läuft PiHole v6?",
+      "api_groups_unavailable": "Verbindung ok, aber /api/groups nicht erreichbar – läuft PiHole v6?"
     },
     "abort": {
-      "already_configured": "PiHole ist bereits konfiguriert"
+      "already_configured": "PiHole ist bereits konfiguriert",
+      "reconfigure_successful": "Konfiguration erfolgreich aktualisiert"
     }
   },
   "options": {
