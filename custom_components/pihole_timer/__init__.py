@@ -20,7 +20,7 @@ _LOGGER = logging.getLogger(__name__)
 DOMAIN = "pihole_timer"
 STORAGE_KEY = f"{DOMAIN}.timers"
 STORAGE_VERSION = 1
-CARD_VERSION = "0.1.9"
+CARD_VERSION = "0.1.2"
 CARD_FILENAME = "pihole-bypass-card.js"
 
 # URL under which HA will serve the card JS file.
@@ -200,7 +200,9 @@ class PiHoleBypassCoordinator:
                     data = await resp.json()
                     session = data.get("session", {})
                     if session.get("valid"):
-                        self._sid = session.get("sid")
+                        # sid is None when PiHole has no password set —
+                        # store empty string as sentinel so we don't re-auth endlessly.
+                        self._sid = session.get("sid") or ""
                         return True
                 _LOGGER.error("PiHole auth failed: HTTP %s", resp.status)
         except aiohttp.ClientError as err:
@@ -211,11 +213,12 @@ class PiHoleBypassCoordinator:
         self, method: str, endpoint: str, data: dict = None
     ) -> dict | None:
         for _attempt in range(2):
-            if not self._sid:
+            if self._sid is None:
                 if not await self._authenticate():
                     return None
             url = f"{self.api_base}/{endpoint}"
-            headers = {"X-FTL-SID": self._sid}
+            # Empty string sid means no password set — send no auth header.
+            headers = {"X-FTL-SID": self._sid} if self._sid else {}
             try:
                 async with self.session.request(
                     method, url, json=data, headers=headers,

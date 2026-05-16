@@ -133,8 +133,11 @@ class PiHoleBypassConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                         )
                         return "invalid_auth"
                     sid = session_data.get("sid")
+                    # PiHole with no password set returns valid=True but sid=None.
+                    # In that case no auth header is needed at all.
                     _LOGGER.warning(
-                        "PiHole config test: auth OK, sid present=%s", bool(sid)
+                        "PiHole config test: auth OK, sid=%s (None = no password set)",
+                        sid,
                     )
                 elif resp.status == 401:
                     body = await resp.text()
@@ -160,7 +163,8 @@ class PiHoleBypassConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             return "unknown"
 
         # Step 2: verify /api/clients/_suggestions and /api/groups respond correctly
-        headers = {"X-FTL-SID": sid}
+        # If sid is None (no password set on PiHole), send no auth header.
+        headers = {"X-FTL-SID": sid} if sid else {}
         for endpoint, key, error_key in (
             ("clients/_suggestions", "clients", "api_clients_unavailable"),
             ("groups", "groups", "api_groups_unavailable"),
