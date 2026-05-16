@@ -1,6 +1,7 @@
 """Config flow for PiHole Bypass integration."""
 from __future__ import annotations
 
+import logging
 import aiohttp
 import voluptuous as vol
 
@@ -8,6 +9,7 @@ from homeassistant import config_entries
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
 DOMAIN = "pihole_timer"
+_LOGGER = logging.getLogger(__name__)
 
 
 def _build_base_url(host: str, protocol: str) -> str:
@@ -98,35 +100,63 @@ class PiHoleBypassConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     async def _test_connection(
         self, host: str, protocol: str, password: str
     ) -> str | None:
-        """Authenticate and verify /api/clients + /api/groups are reachable.
+        """Authenticate and verify /api/clients/_suggestions + /api/groups are reachable.
 
         Returns an error key string on failure, None on success.
+        All steps are logged at WARNING level so they always appear in HA logs.
         """
         session = async_get_clientsession(self.hass)
         base = _build_base_url(host, protocol)
+        _LOGGER.warning("PiHole config test: connecting to %s", base)
 
         # Step 1: authenticate
+        auth_url = f"{base}/api/auth"
         try:
             async with session.post(
-                f"{base}/api/auth",
+                auth_url,
                 json={"password": password},
                 timeout=aiohttp.ClientTimeout(total=10),
             ) as resp:
+                _LOGGER.warning(
+                    "PiHole config test: POST %s → HTTP %s", auth_url, resp.status
+                )
                 if resp.status == 200:
                     data = await resp.json()
                     session_data = data.get("session", {})
+                    _LOGGER.warning(
+                        "PiHole config test: auth response session=%s", session_data
+                    )
                     if not session_data.get("valid"):
+                        _LOGGER.warning(
+                            "PiHole config test: auth rejected (valid=False), message=%s",
+                            data.get("message", "—"),
+                        )
                         return "invalid_auth"
                     sid = session_data.get("sid")
+                    _LOGGER.warning(
+                        "PiHole config test: auth OK, sid present=%s", bool(sid)
+                    )
                 elif resp.status == 401:
+                    body = await resp.text()
+                    _LOGGER.warning(
+                        "PiHole config test: auth 401 body=%s", body[:200]
+                    )
                     return "invalid_auth"
                 else:
+                    body = await resp.text()
+                    _LOGGER.warning(
+                        "PiHole config test: unexpected auth status %s body=%s",
+                        resp.status, body[:200],
+                    )
                     return "cannot_connect"
-        except aiohttp.ClientConnectorError:
+        except aiohttp.ClientConnectorError as err:
+            _LOGGER.warning("PiHole config test: connection error: %s", err)
             return "cannot_connect"
-        except aiohttp.ClientSSLError:
+        except aiohttp.ClientSSLError as err:
+            _LOGGER.warning("PiHole config test: SSL error: %s", err)
             return "ssl_error"
-        except Exception:  # noqa: BLE001
+        except Exception as err:  # noqa: BLE001
+            _LOGGER.warning("PiHole config test: unexpected error during auth: %s", err)
             return "unknown"
 
         # Step 2: verify /api/clients/_suggestions and /api/groups respond correctly
@@ -135,26 +165,51 @@ class PiHoleBypassConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             ("clients/_suggestions", "clients", "api_clients_unavailable"),
             ("groups", "groups", "api_groups_unavailable"),
         ):
+            url = f"{base}/api/{endpoint}"
             try:
                 async with session.get(
-                    f"{base}/api/{endpoint}",
+                    url,
                     headers=headers,
                     timeout=aiohttp.ClientTimeout(total=10),
                 ) as resp:
+                    body = await resp.text()
+                    _LOGGER.warning(
+                        "PiHole config test: GET %s → HTTP %s body=%s",
+                        url, resp.status, body[:300],
+                    )
                     if resp.status == 401:
                         return "invalid_auth"
                     if resp.status != 200:
                         return error_key
-                    payload = await resp.json()
-                    if key not in payload:
+                    try:
+                        payload = await resp.json(content_type=None)
+                    except Exception as parse_err:  # noqa: BLE001
+                        _LOGGER.warning(
+                            "PiHole config test: JSON parse error for %s: %s",
+                            endpoint, parse_err,
+                        )
                         return error_key
-            except aiohttp.ClientConnectorError:
+                    if key not in payload:
+                        _LOGGER.warning(
+                            "PiHole config test: key '%s' missing from %s response, keys=%s",
+                            key, endpoint, list(payload.keys()),
+                        )
+                        return error_key
+                    _LOGGER.warning(
+                        "PiHole config test: %s OK (%d items)",
+                        endpoint, len(payload[key]),
+                    )
+            except aiohttp.ClientConnectorError as err:
+                _LOGGER.warning("PiHole config test: connection error on %s: %s", url, err)
                 return "cannot_connect"
-            except aiohttp.ClientSSLError:
+            except aiohttp.ClientSSLError as err:
+                _LOGGER.warning("PiHole config test: SSL error on %s: %s", url, err)
                 return "ssl_error"
-            except Exception:  # noqa: BLE001
+            except Exception as err:  # noqa: BLE001
+                _LOGGER.warning("PiHole config test: error on %s: %s", url, err)
                 return error_key
 
+        _LOGGER.warning("PiHole config test: all checks passed")
         return None
 
     @staticmethod
