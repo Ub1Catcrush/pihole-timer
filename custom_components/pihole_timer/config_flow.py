@@ -130,7 +130,7 @@ class PiHoleBypassConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             return "unknown"
 
         # Step 2: verify /api/clients/_suggestions and /api/groups respond correctly
-        headers = {"sid": sid}
+        headers = {"X-FTL-SID": sid}
         for endpoint, key, error_key in (
             ("clients/_suggestions", "clients", "api_clients_unavailable"),
             ("groups", "groups", "api_groups_unavailable"),

@@ -20,7 +20,7 @@ _LOGGER = logging.getLogger(__name__)
 DOMAIN = "pihole_timer"
 STORAGE_KEY = f"{DOMAIN}.timers"
 STORAGE_VERSION = 1
-CARD_VERSION = "0.1.7"
+CARD_VERSION = "0.1.2"
 CARD_FILENAME = "pihole-bypass-card.js"
 
 # URL under which HA will serve the card JS file.
@@ -215,7 +215,7 @@ class PiHoleBypassCoordinator:
                 if not await self._authenticate():
                     return None
             url = f"{self.api_base}/{endpoint}"
-            headers = {"sid": self._sid}
+            headers = {"X-FTL-SID": self._sid}
             try:
                 async with self.session.request(
                     method, url, json=data, headers=headers,
