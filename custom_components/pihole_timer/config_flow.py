@@ -129,11 +129,11 @@ class PiHoleBypassConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         except Exception:  # noqa: BLE001
             return "unknown"
 
-        # Step 2: verify /api/clients and /api/groups respond correctly
+        # Step 2: verify /api/clients/_suggestions and /api/groups respond correctly
         headers = {"sid": sid}
-        for endpoint, error_key in (
-            ("clients", "api_clients_unavailable"),
-            ("groups", "api_groups_unavailable"),
+        for endpoint, key, error_key in (
+            ("clients/_suggestions", "clients", "api_clients_unavailable"),
+            ("groups", "groups", "api_groups_unavailable"),
         ):
             try:
                 async with session.get(
@@ -146,7 +146,7 @@ class PiHoleBypassConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     if resp.status != 200:
                         return error_key
                     payload = await resp.json()
-                    if endpoint not in payload:
+                    if key not in payload:
                         return error_key
             except aiohttp.ClientConnectorError:
                 return "cannot_connect"

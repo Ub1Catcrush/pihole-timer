@@ -25,7 +25,7 @@
       "cannot_connect": "Verbindung zum PiHole Server fehlgeschlagen",
       "invalid_auth": "Ungültiges API Passwort",
       "ssl_error": "SSL-Fehler – bei selbst-signiertem Zertifikat bitte HTTP verwenden",
-      "api_clients_unavailable": "Verbindung ok, aber /api/clients nicht erreichbar – läuft PiHole v6?",
+      "api_clients_unavailable": "Verbindung ok, aber /api/clients/_suggestions nicht erreichbar – läuft PiHole v6?",
       "api_groups_unavailable": "Verbindung ok, aber /api/groups nicht erreichbar – läuft PiHole v6?",
       "unknown": "Unbekannter Fehler"
     },

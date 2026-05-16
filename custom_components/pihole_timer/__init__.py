@@ -20,7 +20,7 @@ _LOGGER = logging.getLogger(__name__)
 DOMAIN = "pihole_timer"
 STORAGE_KEY = f"{DOMAIN}.timers"
 STORAGE_VERSION = 1
-CARD_VERSION = "0.1.6"
+CARD_VERSION = "0.1.2"
 CARD_FILENAME = "pihole-bypass-card.js"
 
 # URL under which HA will serve the card JS file.
@@ -180,10 +180,13 @@ class PiHoleBypassCoordinator:
 
     @property
     def api_base(self) -> str:
-        host = self.host.rstrip("/")
-        if not host.startswith("http"):
-            host = f"http://{host}"
-        return f"{host}/api"
+        protocol = self.entry.data.get("protocol", "http")
+        host = self.host.strip()
+        # Strip any protocol the user may have typed into the host field
+        for prefix in ("https://", "http://"):
+            if host.lower().startswith(prefix):
+                host = host[len(prefix):]
+        return f"{protocol}://{host.rstrip('/')}/api"
 
     async def _authenticate(self) -> bool:
         url = f"{self.api_base}/auth"
@@ -252,30 +255,39 @@ class PiHoleBypassCoordinator:
         self._active_timers.clear()
 
     async def get_clients(self) -> list[dict]:
-        result = await self._api_request("GET", "clients")
+        """Return all known clients via the _suggestions endpoint.
+
+        PiHole v6: GET /clients requires a specific {client} path param.
+        GET /clients/_suggestions returns all network-seen clients with
+        their group assignments — exactly what the card needs.
+        """
+        result = await self._api_request("GET", "clients/_suggestions")
         return result.get("clients", []) if result else []
 
     async def get_groups(self) -> list[dict]:
+        """Return all groups. GET /groups is correct in PiHole v6."""
         result = await self._api_request("GET", "groups")
         return result.get("groups", []) if result else []
 
     async def get_client_groups(self, client_ip: str) -> list[int]:
-        for c in await self.get_clients():
-            if c.get("ip") == client_ip:
-                return c.get("groups", [])
+        """Return the current group IDs for a specific client IP.
+
+        PiHole v6: GET /clients/{client} — returns {"client": {"groups": [...]}}
+        """
+        result = await self._api_request("GET", f"clients/{client_ip}")
+        if result:
+            client_data = result.get("client", {})
+            return client_data.get("groups", [])
         return []
 
     async def set_client_groups(self, client_ip: str, group_ids: list[int]) -> bool:
-        client_id = None
-        for c in await self.get_clients():
-            if c.get("ip") == client_ip:
-                client_id = c.get("id")
-                break
-        if client_id is None:
-            _LOGGER.error("Client %s not found in PiHole", client_ip)
-            return False
+        """Assign groups to a client by IP address.
+
+        PiHole v6: PUT /clients/{client} with body {"groups": [...]}
+        No numeric ID lookup needed — the IP is the identifier.
+        """
         result = await self._api_request(
-            "PUT", f"clients/{client_id}", {"groups": group_ids}
+            "PUT", f"clients/{client_ip}", {"groups": group_ids}
         )
         return result is not None
 
