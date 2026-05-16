@@ -6,14 +6,16 @@
         "description": "Verbinde dich mit deinem PiHole Server (v6+). Den API-Key findest du unter Settings > API in der PiHole Weboberfläche.",
         "data": {
           "name": "Name",
+          "protocol": "Protokoll",
           "host": "Host (IP oder Hostname)",
           "api_key": "API Passwort"
         }
       },
       "reconfigure": {
         "title": "PiHole Bypass neu konfigurieren",
-        "description": "Host oder API-Passwort ändern.",
+        "description": "Protokoll, Host oder API-Passwort ändern.",
         "data": {
+          "protocol": "Protokoll",
           "host": "Host (IP oder Hostname)",
           "api_key": "API Passwort"
         }
@@ -22,9 +24,10 @@
     "error": {
       "cannot_connect": "Verbindung zum PiHole Server fehlgeschlagen",
       "invalid_auth": "Ungültiges API Passwort",
-      "unknown": "Unbekannter Fehler",
+      "ssl_error": "SSL-Fehler – bei selbst-signiertem Zertifikat bitte HTTP verwenden",
       "api_clients_unavailable": "Verbindung ok, aber /api/clients nicht erreichbar – läuft PiHole v6?",
-      "api_groups_unavailable": "Verbindung ok, aber /api/groups nicht erreichbar – läuft PiHole v6?"
+      "api_groups_unavailable": "Verbindung ok, aber /api/groups nicht erreichbar – läuft PiHole v6?",
+      "unknown": "Unbekannter Fehler"
     },
     "abort": {
       "already_configured": "PiHole ist bereits konfiguriert",

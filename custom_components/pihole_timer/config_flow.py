@@ -9,13 +9,15 @@ from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
 DOMAIN = "pihole_timer"
 
-STEP_USER_DATA_SCHEMA = vol.Schema(
-    {
-        vol.Required("name", default="PiHole"): str,
-        vol.Required("host"): str,
-        vol.Required("api_key"): str,
-    }
-)
+
+def _build_base_url(host: str, protocol: str) -> str:
+    """Return a clean base URL, stripping any protocol the user may have typed."""
+    # Strip any embedded protocol so we always use the dropdown value
+    host = host.strip()
+    for prefix in ("https://", "http://"):
+        if host.lower().startswith(prefix):
+            host = host[len(prefix):]
+    return f"{protocol}://{host.rstrip('/')}"
 
 
 class PiHoleBypassConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
@@ -28,7 +30,9 @@ class PiHoleBypassConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
         if user_input is not None:
             error = await self._test_connection(
-                user_input["host"], user_input["api_key"]
+                user_input["host"],
+                user_input["protocol"],
+                user_input["api_key"],
             )
             if error:
                 errors["base"] = error
@@ -40,17 +44,26 @@ class PiHoleBypassConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
         return self.async_show_form(
             step_id="user",
-            data_schema=STEP_USER_DATA_SCHEMA,
+            data_schema=vol.Schema(
+                {
+                    vol.Required("name", default="PiHole"): str,
+                    vol.Required("protocol", default="http"): vol.In(["http", "https"]),
+                    vol.Required("host"): str,
+                    vol.Required("api_key"): str,
+                }
+            ),
             errors=errors,
         )
 
     async def async_step_reconfigure(self, user_input=None):
-        """Allow the user to change host and API key after initial setup."""
+        """Allow the user to change host, protocol and API key after initial setup."""
         errors: dict[str, str] = {}
 
         if user_input is not None:
             error = await self._test_connection(
-                user_input["host"], user_input["api_key"]
+                user_input["host"],
+                user_input["protocol"],
+                user_input["api_key"],
             )
             if error:
                 errors["base"] = error
@@ -59,6 +72,7 @@ class PiHoleBypassConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     self._get_reconfigure_entry(),
                     data={
                         **self._get_reconfigure_entry().data,
+                        "protocol": user_input["protocol"],
                         "host": user_input["host"],
                         "api_key": user_input["api_key"],
                     },
@@ -70,6 +84,10 @@ class PiHoleBypassConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             step_id="reconfigure",
             data_schema=vol.Schema(
                 {
+                    vol.Required(
+                        "protocol",
+                        default=entry.data.get("protocol", "http"),
+                    ): vol.In(["http", "https"]),
                     vol.Required("host", default=entry.data.get("host", "")): str,
                     vol.Required("api_key", default=entry.data.get("api_key", "")): str,
                 }
@@ -77,15 +95,20 @@ class PiHoleBypassConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             errors=errors,
         )
 
-    async def _test_connection(self, host: str, password: str) -> str | None:
-        """Return an error key string, or None on success."""
+    async def _test_connection(
+        self, host: str, protocol: str, password: str
+    ) -> str | None:
+        """Authenticate and verify /api/clients + /api/groups are reachable.
+
+        Returns an error key string on failure, None on success.
+        """
         session = async_get_clientsession(self.hass)
-        if not host.startswith("http"):
-            host = f"http://{host}"
-        url = f"{host.rstrip('/')}/api/auth"
+        base = _build_base_url(host, protocol)
+
+        # Step 1: authenticate
         try:
             async with session.post(
-                url,
+                f"{base}/api/auth",
                 json={"password": password},
                 timeout=aiohttp.ClientTimeout(total=10),
             ) as resp:
@@ -95,15 +118,18 @@ class PiHoleBypassConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     if not session_data.get("valid"):
                         return "invalid_auth"
                     sid = session_data.get("sid")
+                elif resp.status == 401:
+                    return "invalid_auth"
                 else:
-                    return "invalid_auth" if resp.status == 401 else "cannot_connect"
+                    return "cannot_connect"
         except aiohttp.ClientConnectorError:
             return "cannot_connect"
+        except aiohttp.ClientSSLError:
+            return "ssl_error"
         except Exception:  # noqa: BLE001
             return "unknown"
 
-        # Auth succeeded — now verify the client and group API endpoints work.
-        base = host.rstrip("/")
+        # Step 2: verify /api/clients and /api/groups respond correctly
         headers = {"sid": sid}
         for endpoint, error_key in (
             ("clients", "api_clients_unavailable"),
@@ -124,6 +150,8 @@ class PiHoleBypassConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                         return error_key
             except aiohttp.ClientConnectorError:
                 return "cannot_connect"
+            except aiohttp.ClientSSLError:
+                return "ssl_error"
             except Exception:  # noqa: BLE001
                 return error_key
 
