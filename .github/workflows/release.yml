@@ -9,12 +9,16 @@ jobs:
   release:
     name: Create Release
     runs-on: ubuntu-latest
-
     permissions:
-      contents: write # Ermöglicht das Generieren von Notizen und Erstellen von Releases
+      contents: write
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          # Use a token that can push to protected branches
+          token: ${{ secrets.GITHUB_TOKEN }}
+          # Fetch full history so we can push the commit back
+          fetch-depth: 0
 
       - name: Extract version from tag
         id: ver
@@ -22,30 +26,55 @@ jobs:
           NUM=${GITHUB_REF#refs/tags/v}
           echo "NUM=$NUM" >> $GITHUB_OUTPUT
           echo "TAG=v$NUM" >> $GITHUB_OUTPUT
+          echo "Releasing version $NUM"
 
       - name: Stamp version into all files
         run: |
           V=${{ steps.ver.outputs.NUM }}
 
-          # 1. VERSION file schreiben
+          # 1. VERSION file
           echo "$V" > VERSION
 
           # 2. manifest.json anpassen
           sed -i "s/\"version\": \".*\"/\"version\": \"${V}\"/" \
             custom_components/pihole_timer/manifest.json
 
-          # 3. __init__.py CARD_VERSION constant anpassen
+          # 3. __init__.py CARD_VERSION constant
           sed -i "s/^CARD_VERSION = \".*\"/CARD_VERSION = \"$V\"/" \
             custom_components/pihole_timer/__init__.py
 
-          # 4. Beide card JS files — version in console.info string anpassen (-E für erweitertes Regex)
-          sed -i -E "s/v[0-9]+\.[0-9]+\.[0-9]+/v$V/g" \
+          # 4. Both card JS files
+          sed -i "s/v[0-9]\+\.[0-9]\+\.[0-9]\+/v$V/g" \
             custom_components/pihole_timer/www/pihole-bypass-card.js
-          sed -i -E "s/v[0-9]+\.[0-9]+\.[0-9]+/v$V/g" \
+          sed -i "s/v[0-9]\+\.[0-9]\+\.[0-9]\+/v$V/g" \
             www/pihole-bypass-card.js
 
-          echo "All files stamped with version $V"
-          
+          echo "All files stamped with $V"
+
+      - name: Commit version bump back to repo
+        run: |
+          V=${{ steps.ver.outputs.NUM }}
+
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          git add \
+            VERSION \
+            custom_components/pihole_timer/manifest.json \
+            custom_components/pihole_timer/__init__.py \
+            custom_components/pihole_timer/www/pihole-bypass-card.js \
+            www/pihole-bypass-card.js
+
+          # Only commit if something actually changed
+          if git diff --cached --quiet; then
+            echo "Nothing to commit (files already at $V)"
+          else
+            git commit -m "chore: stamp version $V [skip ci]"
+            # Push to the branch the tag points to (usually main/master)
+            git push origin HEAD:$(git remote show origin | grep 'HEAD branch' | awk '{print $NF}')
+            echo "Version commit pushed"
+          fi
+
       - name: Build release zip
         run: |
           V=${{ steps.ver.outputs.NUM }}
