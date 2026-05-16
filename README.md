@@ -7,7 +7,7 @@
 
 Eine Home Assistant Custom Integration mit Lovelace Card zum **temporären Umgehen der PiHole-Filterung** für einzelne Clients – mit automatischer Wiederherstellung nach Timer-Ablauf.
 
-![PiHole Bypass Card Screenshot](https://raw.githubusercontent.com/Ub1Catcrush/pihole-timer/main/docs/screenshot.png)
+![PiHole Bypass Card Screenshot](https://raw.githubusercontent.com/Ub1Catcrush/pihole-timer/master/docs/screenshot.png)
 
 ---
 

@@ -21,7 +21,9 @@ DOMAIN = "pihole_bypass"
 STORAGE_KEY = f"{DOMAIN}.timers"
 STORAGE_VERSION = 1
 
-LOVELACE_RESOURCE_URL = "/pihole_bypass/pihole-bypass-card.js"
+# We serve the card JS ourselves at a stable, predictable URL
+CARD_URL = "/pihole_bypass/pihole-bypass-card.js"
+CARD_VERSION = "1.3.0"
 LOVELACE_RESOURCES_STORAGE_KEY = "lovelace_resources"
 
 
@@ -38,17 +40,21 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     await coordinator.async_initialize()
 
-    # Serve the card JS from inside the integration directory
+    # Serve card JS at a known stable URL from inside the integration
     card_path = Path(__file__).parent / "www" / "pihole-bypass-card.js"
-    await hass.http.async_register_static_paths([
-        StaticPathConfig(
-            url_path=LOVELACE_RESOURCE_URL,
-            path=str(card_path),
-            cache_headers=False,
-        )
-    ])
+    try:
+        await hass.http.async_register_static_paths([
+            StaticPathConfig(
+                url_path=CARD_URL,
+                path=str(card_path),
+                cache_headers=False,
+            )
+        ])
+    except RuntimeError:
+        # Already registered (e.g. multiple config entries or HA reload)
+        pass
 
-    # Auto-register the Lovelace resource (runs once, idempotent)
+    # Auto-register Lovelace resource
     await _async_register_lovelace_resource(hass)
 
     # REST API for the card
@@ -58,7 +64,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
 
 async def _async_register_lovelace_resource(hass: HomeAssistant) -> None:
-    """Add the card JS to Lovelace resources if not already present."""
+    """Ensure the card JS is registered as a Lovelace module resource."""
     store = storage.Store(hass, 1, LOVELACE_RESOURCES_STORAGE_KEY)
     try:
         data = await store.async_load() or {}
@@ -66,23 +72,36 @@ async def _async_register_lovelace_resource(hass: HomeAssistant) -> None:
         data = {}
 
     items: list[dict] = data.get("items", [])
+    changed = False
 
-    # Already registered?
+    # Remove any stale entries for our card (old /hacsfiles/ URL or old version)
+    filtered = []
     for item in items:
-        if item.get("url", "").startswith(LOVELACE_RESOURCE_URL.split("?")[0]):
-            _LOGGER.debug("Lovelace resource already registered, skipping")
-            return
+        url = item.get("url", "")
+        if "pihole-bypass-card" in url and not url.startswith(CARD_URL):
+            _LOGGER.info("Removing stale PiHole Bypass resource entry: %s", url)
+            changed = True
+        else:
+            filtered.append(item)
 
-    items.append({
-        "id": str(len(items) + 1),
-        "type": "module",
-        "url": f"{LOVELACE_RESOURCE_URL}?v=1.2.0",
-    })
-    data["items"] = items
-    await store.async_save(data)
-    _LOGGER.info("PiHole Bypass: Lovelace resource registered automatically")
+    # Check if our current URL is already registered
+    already_registered = any(
+        item.get("url", "").startswith(CARD_URL) for item in filtered
+    )
 
-    hass.bus.async_fire("lovelace_updated")
+    if not already_registered:
+        filtered.append({
+            "id": str(len(filtered) + 1),
+            "type": "module",
+            "url": f"{CARD_URL}?v={CARD_VERSION}",
+        })
+        changed = True
+        _LOGGER.info("PiHole Bypass: registered Lovelace resource at %s", CARD_URL)
+
+    if changed:
+        data["items"] = filtered
+        await store.async_save(data)
+        hass.bus.async_fire("lovelace_updated")
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
@@ -276,9 +295,12 @@ class PiHoleBypassCoordinator:
         now = dt_util.utcnow()
         result = {}
         for client_ip, info in self._timer_data.items():
-            end_time = datetime.fromisoformat(info["end_time"])
-            remaining = max(0, (end_time - now).total_seconds())
-            result[client_ip] = {**info, "remaining_seconds": remaining}
+            result[client_ip] = {
+                **info,
+                "remaining_seconds": max(
+                    0, (datetime.fromisoformat(info["end_time"]) - now).total_seconds()
+                ),
+            }
         return result
 
     async def _save_timers(self) -> None:
