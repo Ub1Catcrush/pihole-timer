@@ -9,43 +9,64 @@ jobs:
   release:
     name: Create Release
     runs-on: ubuntu-latest
-
-    permissions:
-      contents: write # Ermöglicht das Generieren von Notizen und Erstellen von Releases
-
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Get tag version
-        id: get_version
-        run: echo "VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
-
-      - name: Update version in manifest.json
+      - name: Extract version from tag
+        id: ver
         run: |
-          VERSION=${{ steps.get_version.outputs.VERSION }}
-          VERSION_NUM=${VERSION#v}
-          sed -i "s/\"version\": \".*\"/\"version\": \"${VERSION_NUM}\"/" custom_components/pihole_bypass/manifest.json
-          echo "Updated manifest.json to version ${VERSION_NUM}"
+          NUM=${GITHUB_REF#refs/tags/v}
+          echo "NUM=$NUM" >> $GITHUB_OUTPUT
+          echo "TAG=v$NUM" >> $GITHUB_OUTPUT
 
-      - name: Create release zip
+      - name: Stamp version into all files
         run: |
-          zip -r pihole-bypass-${{ steps.get_version.outputs.VERSION }}.zip \
+          V=${{ steps.ver.outputs.NUM }}
+
+          # 1. VERSION file
+          echo "$V" > VERSION
+
+          # 2. manifest.json
+          sed -i "s/\"version\": \".*\"/\"version\": \"${V}\"/" custom_components/pihole_bypass/manifest.json
+#          python3 -c "
+#import json
+#with open('custom_components/pihole_timer/manifest.json') as f:
+#    d = json.load(f)
+#d['version'] = '$V'
+#with open('custom_components/pihole_timer/manifest.json', 'w') as f:
+#    json.dump(d, f, indent=2)
+#print('manifest -> ' + '$V')
+#"
+
+          # 3. __init__.py  CARD_VERSION constant
+          sed -i "s/^CARD_VERSION = \".*\"/CARD_VERSION = \"$V\"/" \
+            custom_components/pihole_timer/__init__.py
+
+          # 4. Both card JS files — version in console.info string
+          sed -i "s/v[0-9]\+\.[0-9]\+\.[0-9]\+/v$V/g" \
+            custom_components/pihole_timer/www/pihole-bypass-card.js
+          sed -i "s/v[0-9]\+\.[0-9]\+\.[0-9]\+/v$V/g" \
+            www/pihole-bypass-card.js
+
+          echo "All files stamped with version $V"
+          
+      - name: Build release zip
+        run: |
+          V=${{ steps.ver.outputs.NUM }}
+          zip -r pihole-bypass-v${V}.zip \
             custom_components/ \
             www/ \
+            icon.png \
+            VERSION \
             README.md \
             hacs.json \
             -x "*.pyc" -x "__pycache__/*"
 
-      - name: Create GitHub Release
+      - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ steps.get_version.outputs.VERSION }}
-          name: PiHole Bypass ${{ steps.get_version.outputs.VERSION }}
-          draft: false
-          prerelease: false
-          files: |
-            pihole-bypass-${{ steps.get_version.outputs.VERSION }}.zip
+          name: "PiHole Bypass v${{ steps.ver.outputs.NUM }}"
+          files: pihole-bypass-v${{ steps.ver.outputs.NUM }}.zip
           generate_release_notes: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

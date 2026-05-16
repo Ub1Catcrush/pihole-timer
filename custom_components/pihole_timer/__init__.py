@@ -17,13 +17,13 @@ from aiohttp import web
 
 _LOGGER = logging.getLogger(__name__)
 
-DOMAIN = "pihole_bypass"
+DOMAIN = "pihole_timer"
 STORAGE_KEY = f"{DOMAIN}.timers"
 STORAGE_VERSION = 1
 
 # We serve the card JS ourselves at a stable, predictable URL
-CARD_URL = "/pihole_bypass/pihole-bypass-card.js"
-CARD_VERSION = "1.4.0"
+CARD_URL = "/pihole_timer/pihole-bypass-card.js"
+CARD_VERSION = "0.0.9"
 LOVELACE_RESOURCES_STORAGE_KEY = "lovelace_resources"
 
 
@@ -308,8 +308,8 @@ class PiHoleBypassCoordinator:
 
 
 class PiHoleBypassView(HomeAssistantView):
-    url = "/api/pihole_bypass/{action}"
-    name = "api:pihole_bypass"
+    url = "/api/pihole_timer/{action}"
+    name = "api:pihole_timer"
     requires_auth = True
 
     def __init__(self, coordinator: PiHoleBypassCoordinator) -> None:

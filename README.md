@@ -134,9 +134,9 @@ Die Integration feuert folgende HA-Events:
 
 | Event | Auslöser | Daten |
 |-------|---------|-------|
-| `pihole_bypass_bypass_activated` | Bypass gestartet | `client_ip`, `groups`, `end_time` |
-| `pihole_bypass_bypass_expired` | Timer abgelaufen | `client_ip`, `restored_groups` |
-| `pihole_bypass_bypass_cancelled` | Manuell abgebrochen | `client_ip` |
+| `pihole_timer_bypass_activated` | Bypass gestartet | `client_ip`, `groups`, `end_time` |
+| `pihole_timer_bypass_expired` | Timer abgelaufen | `client_ip`, `restored_groups` |
+| `pihole_timer_bypass_cancelled` | Manuell abgebrochen | `client_ip` |
 
 **Beispiel-Automatisierung:**
 
@@ -145,7 +145,7 @@ automation:
   - alias: "Benachrichtigung bei Bypass-Aktivierung"
     trigger:
       platform: event
-      event_type: pihole_bypass_bypass_activated
+      event_type: pihole_timer_bypass_activated
     action:
       service: notify.mobile_app_mein_handy
       data:
@@ -161,10 +161,10 @@ automation:
 
 | Service | Parameter | Beschreibung |
 |---------|-----------|-------------|
-| `pihole_bypass.activate_bypass` | `client_ip`, `groups`, `duration_minutes` | Bypass aktivieren |
-| `pihole_bypass.deactivate_bypass` | `client_ip` | Bypass beenden |
-| `pihole_bypass.get_clients` | – | Clients neu laden |
-| `pihole_bypass.get_groups` | – | Gruppen neu laden |
+| `pihole_timer.activate_bypass` | `client_ip`, `groups`, `duration_minutes` | Bypass aktivieren |
+| `pihole_timer.deactivate_bypass` | `client_ip` | Bypass beenden |
+| `pihole_timer.get_clients` | – | Clients neu laden |
+| `pihole_timer.get_groups` | – | Gruppen neu laden |
 
 ---
 

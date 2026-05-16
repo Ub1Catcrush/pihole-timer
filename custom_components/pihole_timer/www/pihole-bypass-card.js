@@ -56,7 +56,7 @@ class PiHoleBypassCard extends HTMLElement {
   // ── Data fetching ─────────────────────────────────────────────────────────
 
   async _apiGet(action) {
-    const resp = await fetch(`/api/pihole_bypass/${action}`, {
+    const resp = await fetch(`/api/pihole_timer/${action}`, {
       headers: { Authorization: `Bearer ${this._hass.auth.data.access_token}` },
     });
     if (!resp.ok) throw new Error(`HTTP ${resp.status}: ${await resp.text()}`);
@@ -64,7 +64,7 @@ class PiHoleBypassCard extends HTMLElement {
   }
 
   async _apiPost(action, body) {
-    const resp = await fetch(`/api/pihole_bypass/${action}`, {
+    const resp = await fetch(`/api/pihole_timer/${action}`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",

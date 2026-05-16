@@ -56,7 +56,7 @@ class PiHoleBypassCard extends HTMLElement {
   // ── Data fetching ─────────────────────────────────────────────────────────
 
   async _apiGet(action) {
-    const resp = await fetch(`/api/pihole_bypass/${action}`, {
+    const resp = await fetch(`/api/pihole_timer/${action}`, {
       headers: { Authorization: `Bearer ${this._hass.auth.data.access_token}` },
     });
     if (!resp.ok) throw new Error(`HTTP ${resp.status}: ${await resp.text()}`);
@@ -64,7 +64,7 @@ class PiHoleBypassCard extends HTMLElement {
   }
 
   async _apiPost(action, body) {
-    const resp = await fetch(`/api/pihole_bypass/${action}`, {
+    const resp = await fetch(`/api/pihole_timer/${action}`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -487,7 +487,7 @@ if (!window.customCards.find(c => c.type === "pihole-bypass-card")) {
 }
 
 console.info(
-  "%c PIHOLE-BYPASS-CARD %c v1.2.0 ",
+  "%c PIHOLE-BYPASS-CARD %c v0.0.8 ",
   "color:white;background:#e63946;font-weight:bold;padding:2px 6px;border-radius:3px 0 0 3px",
   "color:#e63946;background:#1c1c1e;font-weight:bold;padding:2px 6px;border-radius:0 3px 3px 0"
 );
