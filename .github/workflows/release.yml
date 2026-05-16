@@ -28,7 +28,7 @@ jobs:
 
           # 2. manifest.json anpassen
           sed -i "s/\"version\": \".*\"/\"version\": \"${V}\"/" \
-            custom_components/pihole_bypass/manifest.json
+            custom_components/pihole_timer/manifest.json
 
           # 3. __init__.py CARD_VERSION constant anpassen
           sed -i "s/^CARD_VERSION = \".*\"/CARD_VERSION = \"$V\"/" \
