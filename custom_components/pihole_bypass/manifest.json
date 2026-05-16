@@ -1,7 +1,7 @@
 {
   "domain": "pihole_bypass",
   "name": "PiHole Bypass",
-  "version": "0.0.6",
+  "version": "0.0.7",
   "documentation": "https://github.com/Ub1Catcrush/pihole-timer",
   "issue_tracker": "https://github.com/Ub1Catcrush/pihole-timer/issues",
   "requirements": [],
