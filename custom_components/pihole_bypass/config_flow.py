@@ -24,11 +24,12 @@ class PiHoleBypassConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     VERSION = 1
 
     async def async_step_user(self, user_input=None):
-        """Handle the initial step."""
         errors: dict[str, str] = {}
 
         if user_input is not None:
-            error = await self._test_connection(user_input["host"], user_input["api_key"])
+            error = await self._test_connection(
+                user_input["host"], user_input["api_key"]
+            )
             if error:
                 errors["base"] = error
             else:
@@ -44,7 +45,7 @@ class PiHoleBypassConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         )
 
     async def _test_connection(self, host: str, password: str) -> str | None:
-        """Return error key or None on success."""
+        """Return an error key string, or None on success."""
         session = async_get_clientsession(self.hass)
         if not host.startswith("http"):
             host = f"http://{host}"
@@ -65,23 +66,24 @@ class PiHoleBypassConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 return "cannot_connect"
         except aiohttp.ClientConnectorError:
             return "cannot_connect"
-        except Exception:
+        except Exception:  # noqa: BLE001
             return "unknown"
 
     @staticmethod
+    @config_entries.callback
     def async_get_options_flow(config_entry):
-        return PiHoleBypassOptionsFlow(config_entry)
+        """Create the options flow."""
+        return PiHoleBypassOptionsFlow()
 
 
 class PiHoleBypassOptionsFlow(config_entries.OptionsFlow):
-    """Handle options."""
-
-    def __init__(self, config_entry):
-        self.config_entry = config_entry
+    """Options flow — no __init__ args needed; self.config_entry is set by HA."""
 
     async def async_step_init(self, user_input=None):
         if user_input is not None:
             return self.async_create_entry(title="", data=user_input)
+
+        current_duration = self.config_entry.options.get("default_duration", 10)
 
         return self.async_show_form(
             step_id="init",
@@ -89,7 +91,7 @@ class PiHoleBypassOptionsFlow(config_entries.OptionsFlow):
                 {
                     vol.Optional(
                         "default_duration",
-                        default=self.config_entry.options.get("default_duration", 10),
+                        default=current_duration,
                     ): vol.All(int, vol.Range(min=1, max=1440)),
                 }
             ),

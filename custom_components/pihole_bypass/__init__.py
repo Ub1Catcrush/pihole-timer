@@ -6,7 +6,7 @@ import asyncio
 import aiohttp
 from datetime import datetime, timedelta
 
-from homeassistant.core import HomeAssistant, ServiceCall
+from homeassistant.core import HomeAssistant
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers import storage
@@ -20,15 +20,17 @@ DOMAIN = "pihole_bypass"
 STORAGE_KEY = f"{DOMAIN}.timers"
 STORAGE_VERSION = 1
 
+# Lovelace resource auto-registration
+LOVELACE_RESOURCE_URL = "/pihole_bypass/pihole-bypass-card.js"
+LOVELACE_RESOURCES_STORAGE_KEY = "lovelace_resources"
+
 
 async def async_setup(hass: HomeAssistant, config: dict) -> bool:
-    """Set up the PiHole Bypass component."""
     hass.data.setdefault(DOMAIN, {})
     return True
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
-    """Set up PiHole Bypass from a config entry."""
     hass.data.setdefault(DOMAIN, {})
 
     coordinator = PiHoleBypassCoordinator(hass, entry)
@@ -36,14 +38,53 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     await coordinator.async_initialize()
 
-    # Register REST API endpoint for the Lovelace card
+    # Serve the card JS directly from the integration
+    hass.http.register_static_path(
+        LOVELACE_RESOURCE_URL,
+        hass.config.path("custom_components/pihole_bypass/www/pihole-bypass-card.js"),
+        cache_headers=False,
+    )
+
+    # Auto-register the Lovelace resource so user doesn't have to
+    await _async_register_lovelace_resource(hass)
+
+    # REST API for the card
     hass.http.register_view(PiHoleBypassView(coordinator))
 
     return True
 
 
+async def _async_register_lovelace_resource(hass: HomeAssistant) -> None:
+    """Add the card JS to Lovelace resources if not already present."""
+    store = storage.Store(hass, 1, LOVELACE_RESOURCES_STORAGE_KEY)
+    try:
+        data = await store.async_load() or {}
+    except Exception:  # noqa: BLE001
+        data = {}
+
+    items: list[dict] = data.get("items", [])
+
+    # Check if already registered
+    for item in items:
+        if item.get("url", "").startswith(LOVELACE_RESOURCE_URL.split("?")[0]):
+            _LOGGER.debug("Lovelace resource already registered")
+            return
+
+    # Add resource
+    items.append({
+        "id": str(len(items) + 1),
+        "type": "module",
+        "url": f"{LOVELACE_RESOURCE_URL}?v=1.1.0",
+    })
+    data["items"] = items
+    await store.async_save(data)
+    _LOGGER.info("PiHole Bypass card registered as Lovelace resource")
+
+    # Notify frontend to reload
+    hass.bus.async_fire("lovelace_updated")
+
+
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
-    """Unload a config entry."""
     coordinator = hass.data[DOMAIN].pop(entry.entry_id, None)
     if coordinator:
         await coordinator.async_cleanup()
@@ -78,7 +119,6 @@ class PiHoleBypassCoordinator:
         return f"{host}/api"
 
     async def _authenticate(self) -> bool:
-        """Authenticate with PiHole and store session ID."""
         url = f"{self.api_base}/auth"
         try:
             async with self.session.post(
@@ -98,24 +138,19 @@ class PiHoleBypassCoordinator:
         return False
 
     async def _api_request(self, method: str, endpoint: str, data: dict = None) -> dict | None:
-        """Make an authenticated API request, re-authenticating once if needed."""
-        for attempt in range(2):
+        for _attempt in range(2):
             if not self._sid:
                 if not await self._authenticate():
                     return None
-
             url = f"{self.api_base}/{endpoint}"
             headers = {"sid": self._sid}
             try:
                 async with self.session.request(
-                    method,
-                    url,
-                    json=data,
-                    headers=headers,
+                    method, url, json=data, headers=headers,
                     timeout=aiohttp.ClientTimeout(total=10),
                 ) as resp:
                     if resp.status == 401:
-                        self._sid = None  # force re-auth on next attempt
+                        self._sid = None
                         continue
                     if resp.status in (200, 201):
                         return await resp.json()
@@ -127,7 +162,6 @@ class PiHoleBypassCoordinator:
         return None
 
     async def async_initialize(self) -> None:
-        """Restore any persisted timers after HA restart."""
         data = await self._store.async_load()
         if not data:
             return
@@ -142,34 +176,27 @@ class PiHoleBypassCoordinator:
                 await self._restore_client_groups(client_ip, info["original_groups"])
 
     async def async_cleanup(self) -> None:
-        """Cancel all active timers on unload."""
         for handle in self._active_timers.values():
             handle.cancel()
         self._active_timers.clear()
 
     async def get_clients(self) -> list[dict]:
         result = await self._api_request("GET", "clients")
-        if result:
-            return result.get("clients", [])
-        return []
+        return result.get("clients", []) if result else []
 
     async def get_groups(self) -> list[dict]:
         result = await self._api_request("GET", "groups")
-        if result:
-            return result.get("groups", [])
-        return []
+        return result.get("groups", []) if result else []
 
     async def get_client_groups(self, client_ip: str) -> list[int]:
-        clients = await self.get_clients()
-        for c in clients:
+        for c in await self.get_clients():
             if c.get("ip") == client_ip:
                 return c.get("groups", [])
         return []
 
     async def set_client_groups(self, client_ip: str, group_ids: list[int]) -> bool:
-        clients = await self.get_clients()
         client_id = None
-        for c in clients:
+        for c in await self.get_clients():
             if c.get("ip") == client_ip:
                 client_id = c.get("id")
                 break
@@ -183,10 +210,8 @@ class PiHoleBypassCoordinator:
         original_groups = await self.get_client_groups(client_ip)
         if not await self.set_client_groups(client_ip, groups):
             return False
-
         if client_ip in self._active_timers:
             self._active_timers[client_ip].cancel()
-
         end_time = dt_util.utcnow() + timedelta(minutes=duration_minutes)
         info = {
             "client_ip": client_ip,
@@ -199,9 +224,7 @@ class PiHoleBypassCoordinator:
         await self._save_timers()
         self._schedule_restore(client_ip, original_groups, duration_minutes * 60)
         self.hass.bus.async_fire(f"{DOMAIN}_bypass_activated", {
-            "client_ip": client_ip,
-            "groups": groups,
-            "end_time": end_time.isoformat(),
+            "client_ip": client_ip, "groups": groups, "end_time": end_time.isoformat(),
         })
         _LOGGER.info("Bypass activated for %s (%d min)", client_ip, duration_minutes)
         return True
@@ -209,8 +232,7 @@ class PiHoleBypassCoordinator:
     def _schedule_restore(self, client_ip: str, original_groups: list[int], delay_seconds: float) -> None:
         def _cb():
             asyncio.ensure_future(self._restore_client_groups(client_ip, original_groups))
-        handle = self.hass.loop.call_later(delay_seconds, _cb)
-        self._active_timers[client_ip] = handle
+        self._active_timers[client_ip] = self.hass.loop.call_later(delay_seconds, _cb)
 
     async def _restore_client_groups(self, client_ip: str, original_groups: list[int]) -> None:
         if await self.set_client_groups(client_ip, original_groups):
@@ -218,8 +240,7 @@ class PiHoleBypassCoordinator:
             self._timer_data.pop(client_ip, None)
             await self._save_timers()
             self.hass.bus.async_fire(f"{DOMAIN}_bypass_expired", {
-                "client_ip": client_ip,
-                "restored_groups": original_groups,
+                "client_ip": client_ip, "restored_groups": original_groups,
             })
             _LOGGER.info("Groups restored for %s", client_ip)
 
@@ -249,8 +270,6 @@ class PiHoleBypassCoordinator:
 
 
 class PiHoleBypassView(HomeAssistantView):
-    """REST API bridge between the Lovelace card and the coordinator."""
-
     url = "/api/pihole_bypass/{action}"
     name = "api:pihole_bypass"
     requires_auth = True
@@ -272,7 +291,6 @@ class PiHoleBypassView(HomeAssistantView):
             data = await request.json()
         except Exception:
             return self.json_message("Invalid JSON", status_code=400)
-
         if action == "activate":
             ok = await self.coordinator.activate_bypass(
                 client_ip=data.get("client_ip"),

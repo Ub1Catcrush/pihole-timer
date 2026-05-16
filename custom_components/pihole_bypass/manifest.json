@@ -1,12 +1,12 @@
 {
   "domain": "pihole_bypass",
   "name": "PiHole Bypass",
-  "version": "1.0.0",
-  "documentation": "https://github.com/YOUR_GITHUB_USERNAME/pihole-bypass-ha",
-  "issue_tracker": "https://github.com/YOUR_GITHUB_USERNAME/pihole-bypass-ha/issues",
+  "version": "0.0.6",
+  "documentation": "https://github.com/Ub1Catcrush/pihole-timer",
+  "issue_tracker": "https://github.com/Ub1Catcrush/pihole-timer/issues",
   "requirements": [],
   "dependencies": [],
-  "codeowners": ["@YOUR_GITHUB_USERNAME"],
+  "codeowners": ["@Ub1Catcrush"],
   "config_flow": true,
   "iot_class": "local_polling",
   "homeassistant": "2023.1.0"
