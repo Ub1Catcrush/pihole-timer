@@ -20,7 +20,7 @@ _LOGGER = logging.getLogger(__name__)
 DOMAIN = "pihole_timer"
 STORAGE_KEY = f"{DOMAIN}.timers"
 STORAGE_VERSION = 1
-CARD_VERSION = "0.1.10"
+CARD_VERSION = "0.1.2"
 CARD_FILENAME = "pihole-bypass-card.js"
 
 # URL under which HA will serve the card JS file.
@@ -73,16 +73,35 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
 
 async def _async_register_card(hass: HomeAssistant) -> None:
-    """Serve the card JS via a static HTTP route and register it as a Lovelace resource.
+    """Serve the card JS and register it as a Lovelace resource if needed.
 
-    Uses the lovelace_resources storage directly — this works in both storage
-    and YAML mode (HA ignores the storage in YAML mode but the static path
-    still serves the file, so users can add the resource manually if needed).
+    When HACS is installed it already serves the card at:
+        /hacsfiles/pihole-timer/pihole-bypass-card.js
+    and manages the lovelace_resources entry itself.  In that case we must NOT
+    touch the storage — doing so removes the HACS entry and replaces it with our
+    own URL that points to a different path, breaking the card.
 
-    Safe to call on every setup; guarded by the module-level _CARD_REGISTERED flag.
+    When installed manually (no HACS) we register a static HTTP path and write
+    the lovelace_resources entry ourselves.
     """
     global _CARD_REGISTERED  # noqa: PLW0603
 
+    if _CARD_REGISTERED:
+        return
+
+    hacs_present = "hacs" in hass.data
+    _LOGGER.info("PiHole card registration: HACS present=%s", hacs_present)
+
+    if hacs_present:
+        # HACS owns the resource entry — nothing to do.
+        _LOGGER.info(
+            "PiHole card: HACS detected, resource managed by HACS at "
+            "/hacsfiles/pihole-timer/%s", CARD_FILENAME
+        )
+        _CARD_REGISTERED = True
+        return
+
+    # Manual install: serve the file ourselves and write the lovelace entry.
     www_dir = pathlib.Path(__file__).parent / "www"
     js_path = www_dir / CARD_FILENAME
 
@@ -90,28 +109,24 @@ async def _async_register_card(hass: HomeAssistant) -> None:
         _LOGGER.error("Card JS not found at %s — card will not be available", js_path)
         return
 
-    if _CARD_REGISTERED:
-        return
-
-    # 1. Serve the file at a stable URL owned by this integration.
     try:
         await hass.http.async_register_static_paths(
             [StaticPathConfig(CARD_URL, str(js_path), cache_headers=False)]
         )
-        _LOGGER.debug("Registered static path %s → %s", CARD_URL, js_path)
+        _LOGGER.info("Registered static path %s → %s", CARD_URL, js_path)
     except Exception as err:  # noqa: BLE001
         _LOGGER.debug("Static path already registered (harmless): %s", err)
 
-    # 2. Register as a Lovelace resource via storage.
     await _async_fix_lovelace_resource_fallback(hass)
-
     _CARD_REGISTERED = True
 
 
 async def _async_fix_lovelace_resource_fallback(hass: HomeAssistant) -> None:
-    """Write the card resource entry into lovelace_resources storage.
+    """Write the card resource entry into lovelace_resources storage (manual install only).
 
     Uses a stable domain-scoped id to stay idempotent across reloads.
+    Only removes entries that were previously written by this integration
+    (matched by the stable id), never entries added by HACS or the user.
     """
     store = storage.Store(hass, 1, LOVELACE_RESOURCES_STORAGE_KEY)
     try:
@@ -121,15 +136,8 @@ async def _async_fix_lovelace_resource_fallback(hass: HomeAssistant) -> None:
 
     items: list[dict] = data.get("items", [])
 
-    # Remove any stale entries from previous versions / URL schemes
-    keywords = ("pihole-bypass-card", "pihole_timer", "pihole_bypass")
-    clean = [
-        item for item in items
-        if not any(kw in item.get("url", "") for kw in keywords)
-    ]
-    removed = len(items) - len(clean)
-    if removed:
-        _LOGGER.info("Removed %d stale PiHole card resource entries", removed)
+    # Remove only our own previously-written entry (by stable id), nothing else.
+    clean = [item for item in items if item.get("id") != f"{DOMAIN}_card"]
 
     clean.append({
         "id": f"{DOMAIN}_card",
@@ -140,7 +148,7 @@ async def _async_fix_lovelace_resource_fallback(hass: HomeAssistant) -> None:
     data["items"] = clean
     await store.async_save(data)
     hass.bus.async_fire("lovelace_updated")
-    _LOGGER.info("PiHole card resource set via storage fallback: %s?v=%s", CARD_URL, CARD_VERSION)
+    _LOGGER.info("PiHole card resource registered (manual install): %s?v=%s", CARD_URL, CARD_VERSION)
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
