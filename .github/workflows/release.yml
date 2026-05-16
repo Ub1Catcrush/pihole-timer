@@ -23,29 +23,21 @@ jobs:
         run: |
           V=${{ steps.ver.outputs.NUM }}
 
-          # 1. VERSION file
+          # 1. VERSION file schreiben
           echo "$V" > VERSION
 
-          # 2. manifest.json
-          sed -i "s/\"version\": \".*\"/\"version\": \"${V}\"/" custom_components/pihole_bypass/manifest.json
-#          python3 -c "
-#import json
-#with open('custom_components/pihole_timer/manifest.json') as f:
-#    d = json.load(f)
-#d['version'] = '$V'
-#with open('custom_components/pihole_timer/manifest.json', 'w') as f:
-#    json.dump(d, f, indent=2)
-#print('manifest -> ' + '$V')
-#"
+          # 2. manifest.json anpassen
+          sed -i "s/\"version\": \".*\"/\"version\": \"${V}\"/" \
+            custom_components/pihole_bypass/manifest.json
 
-          # 3. __init__.py  CARD_VERSION constant
+          # 3. __init__.py CARD_VERSION constant anpassen
           sed -i "s/^CARD_VERSION = \".*\"/CARD_VERSION = \"$V\"/" \
             custom_components/pihole_timer/__init__.py
 
-          # 4. Both card JS files — version in console.info string
-          sed -i "s/v[0-9]\+\.[0-9]\+\.[0-9]\+/v$V/g" \
+          # 4. Beide card JS files — version in console.info string anpassen (-E für erweitertes Regex)
+          sed -i -E "s/v[0-9]+\.[0-9]+\.[0-9]+/v$V/g" \
             custom_components/pihole_timer/www/pihole-bypass-card.js
-          sed -i "s/v[0-9]\+\.[0-9]\+\.[0-9]\+/v$V/g" \
+          sed -i -E "s/v[0-9]+\.[0-9]+\.[0-9]+/v$V/g" \
             www/pihole-bypass-card.js
 
           echo "All files stamped with version $V"
