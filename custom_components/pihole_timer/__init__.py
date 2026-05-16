@@ -19,7 +19,7 @@ _LOGGER = logging.getLogger(__name__)
 DOMAIN = "pihole_timer"
 STORAGE_KEY = f"{DOMAIN}.timers"
 STORAGE_VERSION = 1
-CARD_VERSION = "0.0.9"
+CARD_VERSION = "0.1.2"
 
 # HACS serves www/ from the repo root at /hacsfiles/<repo-name>/
 # The repo is named "pihole-timer", so the card is at:
