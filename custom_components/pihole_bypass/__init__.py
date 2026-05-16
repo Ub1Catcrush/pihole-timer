@@ -23,7 +23,7 @@ STORAGE_VERSION = 1
 
 # We serve the card JS ourselves at a stable, predictable URL
 CARD_URL = "/pihole_bypass/pihole-bypass-card.js"
-CARD_VERSION = "1.3.0"
+CARD_VERSION = "1.4.0"
 LOVELACE_RESOURCES_STORAGE_KEY = "lovelace_resources"
 
 
