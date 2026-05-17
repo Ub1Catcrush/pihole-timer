@@ -387,7 +387,7 @@ class PiHoleBypassCard extends HTMLElement {
                   ${this._clients.map(c =>
                     `<option value="${c.ip}" ${c.ip === this._selectedClient ? "selected" : ""}>
                       ${c.comment || c.name || c.ip}${c.comment && c.comment !== c.ip ? ` (${c.ip})` : ""}
-                      ${ip in this._activeTimers ? " 🔴" : ""}
+                      ${c.ip in this._activeTimers ? " 🔴" : ""}
                     </option>`
                   ).join("")}
                 </select>`}
@@ -509,7 +509,7 @@ if (!window.customCards.find(c => c.type === "pihole-bypass-card")) {
 }
 
 console.info(
-  "%c PIHOLE-BYPASS-CARD %c v0.1.19 ",
+  "%c PIHOLE-BYPASS-CARD %c v0.1.2 ",
   "color:white;background:#e63946;font-weight:bold;padding:2px 6px;border-radius:3px 0 0 3px",
   "color:#e63946;background:#1c1c1e;font-weight:bold;padding:2px 6px;border-radius:0 3px 3px 0"
 );
