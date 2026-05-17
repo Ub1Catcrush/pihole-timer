@@ -20,7 +20,7 @@ _LOGGER = logging.getLogger(__name__)
 DOMAIN = "pihole_timer"
 STORAGE_KEY = f"{DOMAIN}.timers"
 STORAGE_VERSION = 1
-CARD_VERSION = "0.1.7"
+CARD_VERSION = "0.1.13"
 CARD_FILENAME = "pihole-bypass-card.js"
 
 # Track whether we already registered the static path / module URL this run
