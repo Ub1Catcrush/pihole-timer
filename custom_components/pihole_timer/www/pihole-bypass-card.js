@@ -97,9 +97,11 @@ class PiHoleBypassCard extends HTMLElement {
         name: c.name ?? "",
         comment: c.comment ?? "",
         vendor: c.macVendor ?? "",
+        groups: c.groups ?? [],
       })).filter(c => c.ip);
       if (!this._selectedClient && this._clients.length > 0) {
         this._selectedClient = this._clients[0].ip ?? "";
+        this._preselectClientGroups();
       }
     } else {
       errors.push(`Clients: ${clientsResult.reason?.message ?? clientsResult.reason}`);
@@ -175,6 +177,15 @@ class PiHoleBypassCard extends HTMLElement {
       this._error = `Fehler: ${e.message}`;
       this._loading = false;
       this._render();
+    }
+  }
+
+  _preselectClientGroups() {
+    const client = this._clients.find(c => c.ip === this._selectedClient);
+    if (client && client.groups.length > 0) {
+      this._selectedGroups = [...client.groups];
+    } else {
+      this._selectedGroups = [];
     }
   }
 
@@ -441,7 +452,11 @@ class PiHoleBypassCard extends HTMLElement {
     this.shadowRoot.getElementById("activateBtn")?.addEventListener("click", () => this._activateBypass());
 
     const clientSel = this.shadowRoot.getElementById("clientSel");
-    if (clientSel) clientSel.addEventListener("change", (e) => { this._selectedClient = e.target.value; });
+    if (clientSel) clientSel.addEventListener("change", (e) => {
+      this._selectedClient = e.target.value;
+      this._preselectClientGroups();
+      this._render();
+    });
 
     const durInput = this.shadowRoot.getElementById("durInput");
     if (durInput) durInput.addEventListener("input", (e) => { this._duration = parseInt(e.target.value) || 10; });
@@ -511,7 +526,7 @@ if (!window.customCards.find(c => c.type === "pihole-bypass-card")) {
 }
 
 console.info(
-  "%c PIHOLE-BYPASS-CARD %c v0.1.21 ",
+  "%c PIHOLE-BYPASS-CARD %c v0.1.2 ",
   "color:white;background:#e63946;font-weight:bold;padding:2px 6px;border-radius:3px 0 0 3px",
   "color:#e63946;background:#1c1c1e;font-weight:bold;padding:2px 6px;border-radius:0 3px 3px 0"
 );
