@@ -11,7 +11,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers import storage
-from homeassistant.components.http import HomeAssistantView
+from homeassistant.components.http import HomeAssistantView, StaticPathConfig
 from homeassistant.util import dt as dt_util
 from aiohttp import web
 
@@ -20,8 +20,10 @@ _LOGGER = logging.getLogger(__name__)
 DOMAIN = "pihole_timer"
 STORAGE_KEY = f"{DOMAIN}.timers"
 STORAGE_VERSION = 1
-CARD_VERSION = "0.1.13"
+CARD_VERSION = "0.1.7"
 CARD_FILENAME = "pihole-bypass-card.js"
+CARD_RESOURCE_URL = f"/hacsfiles/pihole-timer/{CARD_FILENAME}"
+LOVELACE_RESOURCES_STORAGE_KEY = "lovelace_resources"
 
 # Track whether we already registered the static path / module URL this run
 _CARD_REGISTERED: bool = False
@@ -67,28 +69,51 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
 
 async def _async_register_card(hass: HomeAssistant) -> None:
-    """Log card URL for manual installs. HACS manages the lovelace resource.
+    """Ensure exactly one lovelace resource entry exists for the card.
 
-    We deliberately do NOT write to lovelace_resources storage.
-    HACS already registers /hacsfiles/pihole-timer/pihole-bypass-card.js
-    when installed via HACS. Writing a second entry causes the module to load
-    twice, which makes customElements.define throw and HA reports
-    'Custom element not found'.
+    HACS registers resources automatically only for 'plugin' category repos.
+    For 'integration' category (this repo) we must do it ourselves.
 
-    For manual installs without HACS: add the resource manually in
-    Settings → Dashboards → Resources:
-        URL:  /local/pihole-bypass-card.js
-        Type: JavaScript module
-    (after copying www/pihole-bypass-card.js to your HA www/ folder)
+    Strategy: read the storage, skip if our URL is already present (regardless
+    of who added it), otherwise add exactly one entry with a stable id.
+    This is idempotent and never creates duplicates.
     """
     global _CARD_REGISTERED  # noqa: PLW0603
     if _CARD_REGISTERED:
         return
-    _LOGGER.info(
-        "PiHole Bypass: card JS is served by HACS at "
-        "/hacsfiles/pihole-timer/pihole-bypass-card.js. "
-        "For manual installs add this URL as a Lovelace resource."
-    )
+
+    store = storage.Store(hass, 1, LOVELACE_RESOURCES_STORAGE_KEY)
+    try:
+        data = await store.async_load() or {}
+    except Exception as err:  # noqa: BLE001
+        _LOGGER.warning("Could not read lovelace_resources storage: %s", err)
+        data = {}
+
+    items: list[dict] = data.get("items", [])
+
+    # Check if our URL is already registered by anyone (HACS, user, previous run)
+    already = any(CARD_RESOURCE_URL in item.get("url", "") for item in items)
+    if already:
+        _LOGGER.info("PiHole card resource already present — skipping registration")
+        _CARD_REGISTERED = True
+        return
+
+    # Remove only our own stable-id entry from previous installs, then re-add
+    items = [item for item in items if item.get("id") != f"{DOMAIN}_card"]
+    items.append({
+        "id": f"{DOMAIN}_card",
+        "type": "module",
+        "url": f"{CARD_RESOURCE_URL}?v={CARD_VERSION}",
+    })
+
+    data["items"] = items
+    try:
+        await store.async_save(data)
+        hass.bus.async_fire("lovelace_updated")
+        _LOGGER.info("PiHole card resource registered: %s?v=%s", CARD_RESOURCE_URL, CARD_VERSION)
+    except Exception as err:  # noqa: BLE001
+        _LOGGER.error("Failed to save lovelace_resources: %s", err)
+
     _CARD_REGISTERED = True
 
 
