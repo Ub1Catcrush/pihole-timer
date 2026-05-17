@@ -7,9 +7,50 @@ import voluptuous as vol
 
 from homeassistant import config_entries
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
+from homeassistant.helpers import storage
 
 DOMAIN = "pihole_timer"
 _LOGGER = logging.getLogger(__name__)
+
+CARD_FILENAME = "pihole-bypass-card.js"
+CARD_RESOURCE_URL = f"/hacsfiles/pihole-timer/{CARD_FILENAME}"
+LOVELACE_RESOURCES_STORAGE_KEY = "lovelace_resources"
+
+
+async def _async_ensure_lovelace_resource(hass) -> None:
+    """Write the card lovelace resource entry if not already present.
+
+    Called immediately after the user completes setup so the card is
+    available without requiring a full HA restart.
+    """
+    store = storage.Store(hass, 1, LOVELACE_RESOURCES_STORAGE_KEY)
+    try:
+        data = await store.async_load() or {}
+    except Exception as err:  # noqa: BLE001
+        _LOGGER.warning("Could not read lovelace_resources: %s", err)
+        return
+
+    items: list[dict] = data.get("items", [])
+
+    if any(CARD_RESOURCE_URL in item.get("url", "") for item in items):
+        _LOGGER.debug("Lovelace resource already present, skipping")
+        return
+
+    # Remove any stale entry from a previous install attempt
+    items = [item for item in items if item.get("id") != f"{DOMAIN}_card"]
+    items.append({
+        "id": f"{DOMAIN}_card",
+        "type": "module",
+        "url": CARD_RESOURCE_URL,
+    })
+    data["items"] = items
+
+    try:
+        await store.async_save(data)
+        hass.bus.async_fire("lovelace_updated")
+        _LOGGER.info("Lovelace resource registered: %s", CARD_RESOURCE_URL)
+    except Exception as err:  # noqa: BLE001
+        _LOGGER.error("Failed to save lovelace_resources: %s", err)
 
 
 def _build_base_url(host: str, protocol: str) -> str:
@@ -39,6 +80,7 @@ class PiHoleBypassConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             if error:
                 errors["base"] = error
             else:
+                await _async_ensure_lovelace_resource(self.hass)
                 return self.async_create_entry(
                     title=user_input["name"],
                     data=user_input,
