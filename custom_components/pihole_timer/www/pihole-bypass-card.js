@@ -86,7 +86,11 @@ class PiHoleBypassCard extends HTMLElement {
         this._apiGet("groups"),
         this._apiGet("timers"),
       ]);
-      this._clients = clientsResp?.clients ?? [];
+      this._clients = (clientsResp?.clients ?? []).map(c => ({
+        ip: c.ip ?? c.addresses ?? c.hwaddr ?? "",
+        name: c.name ?? c.names ?? "",
+        comment: c.comment ?? c.names ?? "",
+      }));
       this._groups = groupsResp?.groups ?? [];
       this._activeTimers = timersResp?.timers ?? {};
       if (!this._selectedClient && this._clients.length > 0) {
@@ -487,7 +491,7 @@ if (!window.customCards.find(c => c.type === "pihole-bypass-card")) {
 }
 
 console.info(
-  "%c PIHOLE-BYPASS-CARD %c v0.1.17 ",
+  "%c PIHOLE-BYPASS-CARD %c v0.1.2 ",
   "color:white;background:#e63946;font-weight:bold;padding:2px 6px;border-radius:3px 0 0 3px",
   "color:#e63946;background:#1c1c1e;font-weight:bold;padding:2px 6px;border-radius:0 3px 3px 0"
 );
