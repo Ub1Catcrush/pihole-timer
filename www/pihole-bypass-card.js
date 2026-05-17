@@ -80,28 +80,46 @@ class PiHoleBypassCard extends HTMLElement {
     this._loading = true;
     this._error = "";
     this._render();
-    try {
-      const [clientsResp, groupsResp, timersResp] = await Promise.all([
-        this._apiGet("clients"),
-        this._apiGet("groups"),
-        this._apiGet("timers"),
-      ]);
-      this._clients = (clientsResp?.clients ?? []).map(c => ({
+
+    // Fetch clients, groups and timers independently so one failure
+    // does not prevent the others from loading.
+    const [clientsResult, groupsResult, timersResult] = await Promise.allSettled([
+      this._apiGet("clients"),
+      this._apiGet("groups"),
+      this._apiGet("timers"),
+    ]);
+
+    const errors = [];
+
+    if (clientsResult.status === "fulfilled") {
+      this._clients = (clientsResult.value?.clients ?? []).map(c => ({
         ip: c.ip ?? c.addresses ?? c.hwaddr ?? "",
         name: c.name ?? c.names ?? "",
         comment: c.comment ?? c.names ?? "",
       }));
-      this._groups = groupsResp?.groups ?? [];
-      this._activeTimers = timersResp?.timers ?? {};
       if (!this._selectedClient && this._clients.length > 0) {
         this._selectedClient = this._clients[0].ip ?? "";
       }
-    } catch (e) {
-      this._error = `Ladefehler: ${e.message}`;
-    } finally {
-      this._loading = false;
-      this._render();
+    } else {
+      errors.push(`Clients: ${clientsResult.reason?.message ?? clientsResult.reason}`);
     }
+
+    if (groupsResult.status === "fulfilled") {
+      this._groups = groupsResult.value?.groups ?? [];
+    } else {
+      errors.push(`Gruppen: ${groupsResult.reason?.message ?? groupsResult.reason}`);
+    }
+
+    if (timersResult.status === "fulfilled") {
+      this._activeTimers = timersResult.value?.timers ?? {};
+    } else {
+      // Timers failing is non-fatal — just reset to empty
+      this._activeTimers = {};
+    }
+
+    this._error = errors.join(" | ");
+    this._loading = false;
+    this._render();
   }
 
   _tickTimers() {
@@ -491,7 +509,7 @@ if (!window.customCards.find(c => c.type === "pihole-bypass-card")) {
 }
 
 console.info(
-  "%c PIHOLE-BYPASS-CARD %c v0.1.18 ",
+  "%c PIHOLE-BYPASS-CARD %c v0.1.2 ",
   "color:white;background:#e63946;font-weight:bold;padding:2px 6px;border-radius:3px 0 0 3px",
   "color:#e63946;background:#1c1c1e;font-weight:bold;padding:2px 6px;border-radius:0 3px 3px 0"
 );
