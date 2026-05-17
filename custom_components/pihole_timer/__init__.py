@@ -20,7 +20,7 @@ _LOGGER = logging.getLogger(__name__)
 DOMAIN = "pihole_timer"
 STORAGE_KEY = f"{DOMAIN}.timers"
 STORAGE_VERSION = 1
-CARD_VERSION = "0.1.22"
+CARD_VERSION = "0.1.7"
 CARD_FILENAME = "pihole-bypass-card.js"
 CARD_RESOURCE_URL = f"/pihole_timer/{CARD_FILENAME}"
 LOVELACE_RESOURCES_STORAGE_KEY = "lovelace_resources"
@@ -266,13 +266,24 @@ class PiHoleBypassCoordinator:
         return []
 
     async def set_client_groups(self, client_ip: str, group_ids: list[int]) -> bool:
-        """Assign groups to a client by IP address.
+        """Assign groups to a client, preserving all other fields (comment, name, etc).
 
-        PiHole v6: PUT /clients/{client} with body {"groups": [...]}
-        No numeric ID lookup needed — the IP is the identifier.
+        PiHole v6 PUT /clients/{client} replaces the full record — sending only
+        {"groups": [...]} clears comment and name. We fetch the current record
+        first and merge so only groups change.
         """
+        current = await self._api_request("GET", f"clients/{client_ip}")
+        if current:
+            client_data = current.get("client", {})
+            body = {
+                "comment": client_data.get("comment") or "",
+                "name": client_data.get("name") or "",
+                "groups": group_ids,
+            }
+        else:
+            body = {"groups": group_ids}
         result = await self._api_request(
-            "PUT", f"clients/{client_ip}", {"groups": group_ids}
+            "PUT", f"clients/{client_ip}", body
         )
         return result is not None
 
@@ -307,7 +318,7 @@ class PiHoleBypassCoordinator:
         self, client_ip: str, original_groups: list[int], delay_seconds: float
     ) -> None:
         def _cb():
-            asyncio.ensure_future(
+            self.hass.async_create_task(
                 self._restore_client_groups(client_ip, original_groups)
             )
         self._active_timers[client_ip] = self.hass.loop.call_later(delay_seconds, _cb)

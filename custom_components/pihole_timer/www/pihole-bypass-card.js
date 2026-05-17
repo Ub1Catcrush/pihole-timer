@@ -98,7 +98,12 @@ class PiHoleBypassCard extends HTMLElement {
         comment: c.comment ?? "",
         vendor: c.macVendor ?? "",
         groups: c.groups ?? [],
-      })).filter(c => c.ip);
+      })).filter(c => c.ip)
+        .sort((a, b) => {
+          const labelA = a.comment || a.name || a.ip;
+          const labelB = b.comment || b.name || b.ip;
+          return labelA.localeCompare(labelB, undefined, { sensitivity: "base" });
+        });
       if (!this._selectedClient && this._clients.length > 0) {
         this._selectedClient = this._clients[0].ip ?? "";
         this._preselectClientGroups();
@@ -108,7 +113,8 @@ class PiHoleBypassCard extends HTMLElement {
     }
 
     if (groupsResult.status === "fulfilled") {
-      this._groups = groupsResult.value?.groups ?? [];
+      this._groups = (groupsResult.value?.groups ?? [])
+        .sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: "base" }));
     } else {
       errors.push(`Gruppen: ${groupsResult.reason?.message ?? groupsResult.reason}`);
     }
@@ -526,7 +532,7 @@ if (!window.customCards.find(c => c.type === "pihole-bypass-card")) {
 }
 
 console.info(
-  "%c PIHOLE-BYPASS-CARD %c v0.1.22 ",
+  "%c PIHOLE-BYPASS-CARD %c v0.1.2 ",
   "color:white;background:#e63946;font-weight:bold;padding:2px 6px;border-radius:3px 0 0 3px",
   "color:#e63946;background:#1c1c1e;font-weight:bold;padding:2px 6px;border-radius:0 3px 3px 0"
 );
