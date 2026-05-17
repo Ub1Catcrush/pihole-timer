@@ -16,6 +16,7 @@ class PiHoleBypassCard extends HTMLElement {
     this._groups = [];
     this._selectedClient = "";
     this._selectedGroups = [];
+    this._editComment = "";
     this._duration = 10;
     this._activeTimers = {};
     this._loading = false;
@@ -148,6 +149,27 @@ class PiHoleBypassCard extends HTMLElement {
 
   // ── Actions ───────────────────────────────────────────────────────────────
 
+  async _saveComment() {
+    if (!this._selectedClient) return;
+    const btn = this.shadowRoot.getElementById("saveCommentBtn");
+    if (btn) btn.disabled = true;
+    try {
+      await this._apiPost("update_client", {
+        client_ip: this._selectedClient,
+        comment: this._editComment,
+      });
+      // Update local cache so dropdown label reflects new comment immediately
+      const client = this._clients.find(c => c.ip === this._selectedClient);
+      if (client) client.comment = this._editComment;
+      this._render();
+    } catch (e) {
+      this._error = `Fehler beim Speichern: ${e.message}`;
+      this._render();
+    } finally {
+      if (btn) btn.disabled = false;
+    }
+  }
+
   async _activateBypass() {
     if (!this._selectedClient) { this._error = "Bitte einen Client wählen."; this._render(); return; }
     if (this._selectedGroups.length === 0) { this._error = "Bitte mindestens eine Gruppe wählen."; this._render(); return; }
@@ -193,6 +215,7 @@ class PiHoleBypassCard extends HTMLElement {
     } else {
       this._selectedGroups = [];
     }
+    this._editComment = client?.comment ?? "";
   }
 
   _toggleGroup(groupId) {
@@ -254,7 +277,23 @@ class PiHoleBypassCard extends HTMLElement {
           margin-bottom: 5px;
         }
 
-        select, input[type=number] {
+        .comment-row {
+          display: flex; gap: 8px; align-items: center;
+        }
+        .comment-input {
+          flex: 1; background: var(--input-fill-color, rgba(255,255,255,.08));
+          border: 1px solid var(--divider-color, rgba(255,255,255,.12));
+          border-radius: 8px; padding: 8px 10px;
+          color: var(--primary-text-color); font-size: 14px;
+        }
+        .comment-input:focus { outline: none; border-color: var(--primary-color, #e63946); }
+        .btn-save-comment {
+          background: none; border: 1px solid var(--divider-color, rgba(255,255,255,.2));
+          border-radius: 8px; padding: 7px 10px; cursor: pointer;
+          color: var(--primary-text-color); font-size: 16px;
+          transition: background .15s;
+        }
+        .btn-save-comment:hover { background: rgba(255,255,255,.08); }
           width: 100%; padding: 9px 11px; border-radius: 9px;
           border: 1px solid var(--divider-color, rgba(255,255,255,.12));
           background: var(--secondary-background-color, rgba(255,255,255,.05));
@@ -412,6 +451,18 @@ class PiHoleBypassCard extends HTMLElement {
                 </select>`}
           </div>
 
+          <!-- Comment -->
+          ${this._selectedClient ? `
+          <div>
+            <div class="label">Kommentar</div>
+            <div class="comment-row">
+              <input type="text" id="commentInput" class="comment-input"
+                placeholder="Beschreibung des Clients…"
+                value="${this._editComment.replace(/"/g, '&quot;')}">
+              <button class="btn-save-comment" id="saveCommentBtn" title="Kommentar speichern">💾</button>
+            </div>
+          </div>` : ""}
+
           <!-- Groups -->
           <div>
             <div class="label">Gruppen (${this._selectedGroups.length} gewählt)</div>
@@ -456,6 +507,12 @@ class PiHoleBypassCard extends HTMLElement {
     // Bind events after render
     this.shadowRoot.getElementById("reloadBtn")?.addEventListener("click", () => this._loadData());
     this.shadowRoot.getElementById("activateBtn")?.addEventListener("click", () => this._activateBypass());
+
+    const commentInput = this.shadowRoot.getElementById("commentInput");
+    if (commentInput) {
+      commentInput.addEventListener("input", (e) => { this._editComment = e.target.value; });
+    }
+    this.shadowRoot.getElementById("saveCommentBtn")?.addEventListener("click", () => this._saveComment());
 
     const clientSel = this.shadowRoot.getElementById("clientSel");
     if (clientSel) clientSel.addEventListener("change", (e) => {
@@ -532,7 +589,7 @@ if (!window.customCards.find(c => c.type === "pihole-bypass-card")) {
 }
 
 console.info(
-  "%c PIHOLE-BYPASS-CARD %c v0.1.23 ",
+  "%c PIHOLE-BYPASS-CARD %c v0.1.2 ",
   "color:white;background:#e63946;font-weight:bold;padding:2px 6px;border-radius:3px 0 0 3px",
   "color:#e63946;background:#1c1c1e;font-weight:bold;padding:2px 6px;border-radius:0 3px 3px 0"
 );

@@ -20,7 +20,7 @@ _LOGGER = logging.getLogger(__name__)
 DOMAIN = "pihole_timer"
 STORAGE_KEY = f"{DOMAIN}.timers"
 STORAGE_VERSION = 1
-CARD_VERSION = "0.1.23"
+CARD_VERSION = "0.1.7"
 CARD_FILENAME = "pihole-bypass-card.js"
 CARD_RESOURCE_URL = f"/pihole_timer/{CARD_FILENAME}"
 LOVELACE_RESOURCES_STORAGE_KEY = "lovelace_resources"
@@ -152,6 +152,7 @@ class PiHoleBypassCoordinator:
         self._store = storage.Store(hass, STORAGE_VERSION, STORAGE_KEY)
         self._active_timers: dict[str, asyncio.TimerHandle] = {}
         self._timer_data: dict[str, dict] = {}
+        self._client_cache: dict[str, dict] = {}
         self._sid: str | None = None
 
     @property
@@ -241,50 +242,86 @@ class PiHoleBypassCoordinator:
         self._active_timers.clear()
 
     async def get_clients(self) -> list[dict]:
-        """Return all configured clients via GET /api/clients.
-
-        This endpoint returns full client data including comment fields,
-        which are much more useful for identification than MAC addresses.
-        """
+        """Return all configured clients via GET /api/clients, and cache them."""
         result = await self._api_request("GET", "clients")
-        return result.get("clients", []) if result else []
+        clients = result.get("clients", []) if result else []
+        # Cache by the "client" field (MAC or IP) for use in set_client_groups
+        self._client_cache = {c.get("client", ""): c for c in clients if c.get("client")}
+        return clients
 
     async def get_groups(self) -> list[dict]:
-        """Return all groups. GET /groups is correct in PiHole v6."""
         result = await self._api_request("GET", "groups")
         return result.get("groups", []) if result else []
 
     async def get_client_groups(self, client_ip: str) -> list[int]:
-        """Return the current group IDs for a specific client IP.
-
-        PiHole v6: GET /clients/{client} — returns {"client": {"groups": [...]}}
-        """
-        result = await self._api_request("GET", f"clients/{client_ip}")
+        """Return current group IDs from cache, or by fetching the client list."""
+        if hasattr(self, "_client_cache") and client_ip in self._client_cache:
+            return list(self._client_cache[client_ip].get("groups", []))
+        # Fallback: re-fetch the full client list
+        result = await self._api_request("GET", "clients")
         if result:
-            client_data = result.get("client", {})
-            return client_data.get("groups", [])
+            for c in result.get("clients", []):
+                if c.get("client") == client_ip:
+                    return list(c.get("groups", []))
+        _LOGGER.error("get_client_groups: client %s not found", client_ip)
         return []
 
     async def set_client_groups(self, client_ip: str, group_ids: list[int]) -> bool:
-        """Assign groups to a client, preserving all other fields (comment, name, etc).
+        """Assign groups to a client, preserving comment and name.
 
-        PiHole v6 PUT /clients/{client} replaces the full record — sending only
-        {"groups": [...]} clears comment and name. We fetch the current record
-        first and merge so only groups change.
+        PiHole v6 PUT /clients/{client} replaces the full record.
+        We use the cached client data to preserve comment/name fields.
         """
-        current = await self._api_request("GET", f"clients/{client_ip}")
-        if current:
-            client_data = current.get("client", {})
-            body = {
-                "comment": client_data.get("comment") or "",
-                "name": client_data.get("name") or "",
-                "groups": group_ids,
-            }
+        # Use cache; fall back to re-fetching if cache miss
+        client_data = None
+        if hasattr(self, "_client_cache") and client_ip in self._client_cache:
+            client_data = self._client_cache[client_ip]
         else:
-            body = {"groups": group_ids}
-        result = await self._api_request(
-            "PUT", f"clients/{client_ip}", body
-        )
+            result = await self._api_request("GET", "clients")
+            if result:
+                for c in result.get("clients", []):
+                    if c.get("client") == client_ip:
+                        client_data = c
+                        break
+
+        if client_data is None:
+            _LOGGER.error("set_client_groups: client %s not found", client_ip)
+            return False
+
+        body = {
+            "comment": client_data.get("comment") or "",
+            "name": client_data.get("name") or "",
+            "groups": group_ids,
+        }
+        _LOGGER.debug("PUT clients/%s body=%s", client_ip, body)
+        result = await self._api_request("PUT", f"clients/{client_ip}", body)
+        # Update cache so subsequent calls see the new groups
+        if result is not None and hasattr(self, "_client_cache") and client_ip in self._client_cache:
+            self._client_cache[client_ip] = {**self._client_cache[client_ip], "groups": group_ids}
+        return result is not None
+
+    async def update_client(self, client_ip: str, comment: str) -> bool:
+        """Update the comment for a client, preserving current group assignments."""
+        client_data = self._client_cache.get(client_ip)
+        if client_data is None:
+            result = await self._api_request("GET", "clients")
+            if result:
+                for c in result.get("clients", []):
+                    if c.get("client") == client_ip:
+                        client_data = c
+                        break
+        if client_data is None:
+            _LOGGER.error("update_client: client %s not found", client_ip)
+            return False
+        body = {
+            "comment": comment,
+            "name": client_data.get("name") or "",
+            "groups": client_data.get("groups", []),
+        }
+        result = await self._api_request("PUT", f"clients/{client_ip}", body)
+        if result is not None:
+            # Update cache
+            self._client_cache[client_ip] = {**client_data, "comment": comment}
         return result is not None
 
     async def activate_bypass(
@@ -419,5 +456,11 @@ class PiHoleBypassView(HomeAssistantView):
             return self.json({"success": ok})
         if action == "deactivate":
             ok = await coordinator.deactivate_bypass(data.get("client_ip"))
+            return self.json({"success": ok})
+        if action == "update_client":
+            ok = await coordinator.update_client(
+                client_ip=data.get("client_ip"),
+                comment=data.get("comment", ""),
+            )
             return self.json({"success": ok})
         return self.json_message("Unknown action", status_code=404)
