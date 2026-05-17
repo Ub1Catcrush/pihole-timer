@@ -13,7 +13,7 @@ DOMAIN = "pihole_timer"
 _LOGGER = logging.getLogger(__name__)
 
 CARD_FILENAME = "pihole-bypass-card.js"
-CARD_RESOURCE_URL = f"/hacsfiles/pihole-timer/{CARD_FILENAME}"
+CARD_RESOURCE_URL = f"/pihole_timer/{CARD_FILENAME}"
 LOVELACE_RESOURCES_STORAGE_KEY = "lovelace_resources"
 
 

@@ -20,9 +20,9 @@ _LOGGER = logging.getLogger(__name__)
 DOMAIN = "pihole_timer"
 STORAGE_KEY = f"{DOMAIN}.timers"
 STORAGE_VERSION = 1
-CARD_VERSION = "0.1.15"
+CARD_VERSION = "0.1.7"
 CARD_FILENAME = "pihole-bypass-card.js"
-CARD_RESOURCE_URL = f"/hacsfiles/pihole-timer/{CARD_FILENAME}"
+CARD_RESOURCE_URL = f"/pihole_timer/{CARD_FILENAME}"
 LOVELACE_RESOURCES_STORAGE_KEY = "lovelace_resources"
 
 # Track whether we already registered the static path / module URL this run
@@ -68,47 +68,61 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     return True
 
 
-async def _async_register_card(hass: HomeAssistant) -> None:
-    """Ensure the lovelace resource is present on HA restart.
-
-    The config flow writes the entry immediately on first setup.
-    This function handles the case where HA restarts — it re-checks
-    the storage and re-adds if somehow missing, without creating duplicates.
-    """
-    global _CARD_REGISTERED  # noqa: PLW0603
-    if _CARD_REGISTERED:
-        return
-
+async def _async_ensure_lovelace_resource(hass: HomeAssistant) -> None:
+    """Write lovelace resource entry if not already present. Idempotent."""
     store = storage.Store(hass, 1, LOVELACE_RESOURCES_STORAGE_KEY)
     try:
         data = await store.async_load() or {}
     except Exception as err:  # noqa: BLE001
-        _LOGGER.warning("Could not read lovelace_resources storage: %s", err)
-        _CARD_REGISTERED = True
+        _LOGGER.warning("Could not read lovelace_resources: %s", err)
         return
 
     items: list[dict] = data.get("items", [])
 
     if any(CARD_RESOURCE_URL in item.get("url", "") for item in items):
-        _LOGGER.debug("PiHole card resource already present")
-        _CARD_REGISTERED = True
+        _LOGGER.debug("PiHole card resource already present in lovelace_resources")
         return
 
     items = [item for item in items if item.get("id") != f"{DOMAIN}_card"]
     items.append({
         "id": f"{DOMAIN}_card",
         "type": "module",
-        "url": CARD_RESOURCE_URL,
+        "url": f"{CARD_RESOURCE_URL}?v={CARD_VERSION}",
     })
     data["items"] = items
 
     try:
         await store.async_save(data)
         hass.bus.async_fire("lovelace_updated")
-        _LOGGER.info("PiHole card resource registered: %s", CARD_RESOURCE_URL)
+        _LOGGER.info("PiHole card lovelace resource saved: %s", CARD_RESOURCE_URL)
     except Exception as err:  # noqa: BLE001
         _LOGGER.error("Failed to save lovelace_resources: %s", err)
 
+
+async def _async_register_card(hass: HomeAssistant) -> None:
+    """Register the card JS as a static HTTP path and ensure the lovelace resource entry exists."""
+    global _CARD_REGISTERED  # noqa: PLW0603
+    if _CARD_REGISTERED:
+        return
+
+    # Locate the JS file inside custom_components/pihole_timer/www/
+    js_path = pathlib.Path(__file__).parent / "www" / CARD_FILENAME
+    if not js_path.is_file():
+        _LOGGER.error("Card JS not found at %s", js_path)
+        return
+
+    # Register a static HTTP route so the file is reachable at CARD_RESOURCE_URL.
+    # This is the only reliable way for an integration-category HACS repo —
+    # HACS only serves /hacsfiles/ for plugin-category repos.
+    try:
+        await hass.http.async_register_static_paths(
+            [StaticPathConfig(CARD_RESOURCE_URL, str(js_path), cache_headers=False)]
+        )
+        _LOGGER.info("PiHole card static path registered: %s → %s", CARD_RESOURCE_URL, js_path)
+    except Exception as err:  # noqa: BLE001
+        _LOGGER.debug("Static path already registered (harmless on reload): %s", err)
+
+    await _async_ensure_lovelace_resource(hass)
     _CARD_REGISTERED = True
 
 
