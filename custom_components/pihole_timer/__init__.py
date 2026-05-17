@@ -11,7 +11,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers import storage
-from homeassistant.components.http import HomeAssistantView, StaticPathConfig
+from homeassistant.components.http import HomeAssistantView
 from homeassistant.util import dt as dt_util
 from aiohttp import web
 
@@ -20,14 +20,8 @@ _LOGGER = logging.getLogger(__name__)
 DOMAIN = "pihole_timer"
 STORAGE_KEY = f"{DOMAIN}.timers"
 STORAGE_VERSION = 1
-CARD_VERSION = "0.1.12"
+CARD_VERSION = "0.1.7"
 CARD_FILENAME = "pihole-bypass-card.js"
-
-# URL under which HA will serve the card JS file.
-# We register a static path ourselves so this works regardless of HACS.
-CARD_URL = f"/{DOMAIN}/{CARD_FILENAME}"
-
-LOVELACE_RESOURCES_STORAGE_KEY = "lovelace_resources"
 
 # Track whether we already registered the static path / module URL this run
 _CARD_REGISTERED: bool = False
@@ -73,82 +67,30 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
 
 async def _async_register_card(hass: HomeAssistant) -> None:
-    """Serve the card JS and register it as a Lovelace resource if needed.
+    """Log card URL for manual installs. HACS manages the lovelace resource.
 
-    When HACS is installed it already serves the card at:
-        /hacsfiles/pihole-timer/pihole-bypass-card.js
-    and manages the lovelace_resources entry itself.  In that case we must NOT
-    touch the storage — doing so removes the HACS entry and replaces it with our
-    own URL that points to a different path, breaking the card.
+    We deliberately do NOT write to lovelace_resources storage.
+    HACS already registers /hacsfiles/pihole-timer/pihole-bypass-card.js
+    when installed via HACS. Writing a second entry causes the module to load
+    twice, which makes customElements.define throw and HA reports
+    'Custom element not found'.
 
-    When installed manually (no HACS) we register a static HTTP path and write
-    the lovelace_resources entry ourselves.
+    For manual installs without HACS: add the resource manually in
+    Settings → Dashboards → Resources:
+        URL:  /local/pihole-bypass-card.js
+        Type: JavaScript module
+    (after copying www/pihole-bypass-card.js to your HA www/ folder)
     """
     global _CARD_REGISTERED  # noqa: PLW0603
-
     if _CARD_REGISTERED:
         return
-
-    hacs_present = "hacs" in hass.data
-    _LOGGER.info("PiHole card registration: HACS present=%s", hacs_present)
-
-    if hacs_present:
-        # HACS owns the resource entry — nothing to do.
-        _LOGGER.info(
-            "PiHole card: HACS detected, resource managed by HACS at "
-            "/hacsfiles/pihole-timer/%s", CARD_FILENAME
-        )
-        _CARD_REGISTERED = True
-        return
-
-    # Manual install: serve the file ourselves and write the lovelace entry.
-    www_dir = pathlib.Path(__file__).parent / "www"
-    js_path = www_dir / CARD_FILENAME
-
-    if not js_path.is_file():
-        _LOGGER.error("Card JS not found at %s — card will not be available", js_path)
-        return
-
-    try:
-        await hass.http.async_register_static_paths(
-            [StaticPathConfig(CARD_URL, str(js_path), cache_headers=False)]
-        )
-        _LOGGER.info("Registered static path %s → %s", CARD_URL, js_path)
-    except Exception as err:  # noqa: BLE001
-        _LOGGER.debug("Static path already registered (harmless): %s", err)
-
-    await _async_fix_lovelace_resource_fallback(hass)
+    _LOGGER.info(
+        "PiHole Bypass: card JS is served by HACS at "
+        "/hacsfiles/pihole-timer/pihole-bypass-card.js. "
+        "For manual installs add this URL as a Lovelace resource."
+    )
     _CARD_REGISTERED = True
 
-
-async def _async_fix_lovelace_resource_fallback(hass: HomeAssistant) -> None:
-    """Write the card resource entry into lovelace_resources storage (manual install only).
-
-    Uses a stable domain-scoped id to stay idempotent across reloads.
-    Only removes entries that were previously written by this integration
-    (matched by the stable id), never entries added by HACS or the user.
-    """
-    store = storage.Store(hass, 1, LOVELACE_RESOURCES_STORAGE_KEY)
-    try:
-        data = await store.async_load() or {}
-    except Exception:  # noqa: BLE001
-        data = {}
-
-    items: list[dict] = data.get("items", [])
-
-    # Remove only our own previously-written entry (by stable id), nothing else.
-    clean = [item for item in items if item.get("id") != f"{DOMAIN}_card"]
-
-    clean.append({
-        "id": f"{DOMAIN}_card",
-        "type": "module",
-        "url": f"{CARD_URL}?v={CARD_VERSION}",
-    })
-
-    data["items"] = clean
-    await store.async_save(data)
-    hass.bus.async_fire("lovelace_updated")
-    _LOGGER.info("PiHole card resource registered (manual install): %s?v=%s", CARD_URL, CARD_VERSION)
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
