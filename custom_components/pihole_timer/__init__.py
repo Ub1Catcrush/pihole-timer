@@ -20,7 +20,7 @@ _LOGGER = logging.getLogger(__name__)
 DOMAIN = "pihole_timer"
 STORAGE_KEY = f"{DOMAIN}.timers"
 STORAGE_VERSION = 1
-CARD_VERSION = "0.1.20"
+CARD_VERSION = "0.1.7"
 CARD_FILENAME = "pihole-bypass-card.js"
 CARD_RESOURCE_URL = f"/pihole_timer/{CARD_FILENAME}"
 LOVELACE_RESOURCES_STORAGE_KEY = "lovelace_resources"
@@ -241,13 +241,12 @@ class PiHoleBypassCoordinator:
         self._active_timers.clear()
 
     async def get_clients(self) -> list[dict]:
-        """Return all known clients via the _suggestions endpoint.
+        """Return all configured clients via GET /api/clients.
 
-        PiHole v6: GET /clients requires a specific {client} path param.
-        GET /clients/_suggestions returns all network-seen clients with
-        their group assignments — exactly what the card needs.
+        This endpoint returns full client data including comment fields,
+        which are much more useful for identification than MAC addresses.
         """
-        result = await self._api_request("GET", "clients/_suggestions")
+        result = await self._api_request("GET", "clients")
         return result.get("clients", []) if result else []
 
     async def get_groups(self) -> list[dict]:

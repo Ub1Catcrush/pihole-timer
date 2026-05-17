@@ -25,7 +25,7 @@
       "cannot_connect": "Failed to connect to PiHole server",
       "invalid_auth": "Invalid API password",
       "ssl_error": "SSL error – for self-signed certificates please use HTTP",
-      "api_clients_unavailable": "Connected, but /api/clients/_suggestions is unavailable – is PiHole v6 running?",
+      "api_clients_unavailable": "Connected, but /api/clients is unavailable – is PiHole v6 running?",
       "api_groups_unavailable": "Connected, but /api/groups is unavailable – is PiHole v6 running?",
       "unknown": "Unexpected error"
     },

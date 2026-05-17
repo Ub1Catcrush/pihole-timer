@@ -208,7 +208,7 @@ class PiHoleBypassConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         # If sid is None (no password set on PiHole), send no auth header.
         headers = {"X-FTL-SID": sid} if sid else {}
         for endpoint, key, error_key in (
-            ("clients/_suggestions", "clients", "api_clients_unavailable"),
+            ("clients", "clients", "api_clients_unavailable"),
             ("groups", "groups", "api_groups_unavailable"),
         ):
             url = f"{base}/api/{endpoint}"

@@ -93,10 +93,11 @@ class PiHoleBypassCard extends HTMLElement {
 
     if (clientsResult.status === "fulfilled") {
       this._clients = (clientsResult.value?.clients ?? []).map(c => ({
-        ip: c.ip ?? c.addresses ?? c.hwaddr ?? "",
-        name: c.name ?? c.names ?? "",
-        comment: c.comment ?? c.names ?? "",
-      }));
+        ip: c.ip ?? c.client ?? "",
+        name: c.name ?? "",
+        comment: c.comment ?? "",
+        vendor: c.macVendor ?? "",
+      })).filter(c => c.ip);
       if (!this._selectedClient && this._clients.length > 0) {
         this._selectedClient = this._clients[0].ip ?? "";
       }
@@ -384,12 +385,13 @@ class PiHoleBypassCard extends HTMLElement {
               ? `<div class="empty">${this._loading ? "Lade…" : "Keine Clients gefunden — PiHole-Verbindung prüfen"}</div>`
               : `<select id="clientSel">
                   <option value="">-- Client wählen --</option>
-                  ${this._clients.map(c =>
-                    `<option value="${c.ip}" ${c.ip === this._selectedClient ? "selected" : ""}>
-                      ${c.comment || c.name || c.ip}${c.comment && c.comment !== c.ip ? ` (${c.ip})` : ""}
-                      ${c.ip in this._activeTimers ? " 🔴" : ""}
-                    </option>`
-                  ).join("")}
+                  ${this._clients.map(c => {
+                    const label = c.comment || c.name || c.ip;
+                    const sub = (label !== c.ip ? ` (${c.ip})` : "") + (c.vendor ? ` • ${c.vendor}` : "");
+                    return `<option value="${c.ip}" ${c.ip === this._selectedClient ? "selected" : ""}>
+                      ${label}${sub}${c.ip in this._activeTimers ? " 🔴" : ""}
+                    </option>`;
+                  }).join("")}
                 </select>`}
           </div>
 
@@ -509,7 +511,7 @@ if (!window.customCards.find(c => c.type === "pihole-bypass-card")) {
 }
 
 console.info(
-  "%c PIHOLE-BYPASS-CARD %c v0.1.20 ",
+  "%c PIHOLE-BYPASS-CARD %c v0.1.2 ",
   "color:white;background:#e63946;font-weight:bold;padding:2px 6px;border-radius:3px 0 0 3px",
   "color:#e63946;background:#1c1c1e;font-weight:bold;padding:2px 6px;border-radius:0 3px 3px 0"
 );
