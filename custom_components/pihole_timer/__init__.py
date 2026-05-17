@@ -20,7 +20,7 @@ _LOGGER = logging.getLogger(__name__)
 DOMAIN = "pihole_timer"
 STORAGE_KEY = f"{DOMAIN}.timers"
 STORAGE_VERSION = 1
-CARD_VERSION = "0.1.16"
+CARD_VERSION = "0.1.7"
 CARD_FILENAME = "pihole-bypass-card.js"
 CARD_RESOURCE_URL = f"/pihole_timer/{CARD_FILENAME}"
 LOVELACE_RESOURCES_STORAGE_KEY = "lovelace_resources"
@@ -201,21 +201,21 @@ class PiHoleBypassCoordinator:
                 if not await self._authenticate():
                     return None
             url = f"{self.api_base}/{endpoint}"
-            # Empty string sid means no password set — send no auth header.
             headers = {"X-FTL-SID": self._sid} if self._sid else {}
+            _LOGGER.warning("PiHole API request: %s %s (sid present=%s)", method, url, bool(self._sid))
             try:
                 async with self.session.request(
                     method, url, json=data, headers=headers,
                     timeout=aiohttp.ClientTimeout(total=10),
                 ) as resp:
+                    body = await resp.text()
+                    _LOGGER.warning("PiHole API response: HTTP %s body=%s", resp.status, body[:200])
                     if resp.status == 401:
                         self._sid = None
                         continue
                     if resp.status in (200, 201):
-                        return await resp.json()
-                    _LOGGER.error(
-                        "PiHole API %s %s → HTTP %s", method, endpoint, resp.status
-                    )
+                        import json as _json
+                        return _json.loads(body)
                     return None
             except aiohttp.ClientError as err:
                 _LOGGER.error("PiHole connection error: %s", err)
@@ -383,11 +383,16 @@ class PiHoleBypassView(HomeAssistantView):
     async def get(self, request: web.Request, action: str) -> web.Response:
         coordinator = self._coordinator()
         if coordinator is None:
+            _LOGGER.error("API GET /%s: no coordinator found in hass.data", action)
             return self.json_message("Integration not loaded", status_code=503)
         if action == "clients":
-            return self.json({"clients": await coordinator.get_clients()})
+            result = await coordinator.get_clients()
+            _LOGGER.debug("API GET /clients: %d items", len(result))
+            return self.json({"clients": result})
         if action == "groups":
-            return self.json({"groups": await coordinator.get_groups()})
+            result = await coordinator.get_groups()
+            _LOGGER.debug("API GET /groups: %d items", len(result))
+            return self.json({"groups": result})
         if action == "timers":
             return self.json({"timers": await coordinator.get_active_timers()})
         return self.json_message("Unknown action", status_code=404)
