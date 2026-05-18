@@ -134,17 +134,32 @@ class PiHoleBypassCard extends HTMLElement {
 
   _tickTimers() {
     let changed = false;
+    let anyExpired = false;
     for (const ip of Object.keys(this._activeTimers)) {
       const t = this._activeTimers[ip];
       if (t.remaining_seconds > 0) {
         t.remaining_seconds = Math.max(0, t.remaining_seconds - 1);
         changed = true;
         if (t.remaining_seconds === 0) {
-          setTimeout(() => this._loadData(), 2500);
+          anyExpired = true;
         }
       }
     }
-    if (changed) this._render();
+    if (changed) this._patchTimerDom();
+    if (anyExpired) setTimeout(() => this._loadData(), 2500);
+  }
+
+  _patchTimerDom() {
+    // Update only the countdown + progress bar elements, leaving all inputs untouched
+    for (const [ip, info] of Object.entries(this._activeTimers)) {
+      const cdEl = this.shadowRoot.querySelector(`.timer-cd[data-ip="${ip}"]`);
+      const barEl = this.shadowRoot.querySelector(`.timer-bar[data-ip="${ip}"]`);
+      if (cdEl) cdEl.textContent = this._fmt(info.remaining_seconds);
+      if (barEl) {
+        const pct = Math.round((info.remaining_seconds / (info.duration_minutes * 60)) * 100);
+        barEl.style.width = pct + "%";
+      }
+    }
   }
 
   // ── Actions ───────────────────────────────────────────────────────────────
@@ -422,10 +437,10 @@ class PiHoleBypassCard extends HTMLElement {
                 <div class="timer-left">
                   <span class="timer-lbl">⏱ Aktiver Bypass</span>
                   <span class="timer-client">${this._clientName(ip)}</span>
-                  <div class="timer-bar-wrap"><div class="timer-bar" style="width:${pct}%"></div></div>
+                  <div class="timer-bar-wrap"><div class="timer-bar" data-ip="${ip}" style="width:${pct}%"></div></div>
                 </div>
                 <div class="timer-right">
-                  <span class="timer-cd">${this._fmt(info.remaining_seconds)}</span>
+                  <span class="timer-cd" data-ip="${ip}">${this._fmt(info.remaining_seconds)}</span>
                   <button class="btn-cancel" data-ip="${ip}">Abbrechen</button>
                 </div>
               </div>`;
@@ -589,7 +604,7 @@ if (!window.customCards.find(c => c.type === "pihole-bypass-card")) {
 }
 
 console.info(
-  "%c PIHOLE-BYPASS-CARD %c v0.1.24 ",
+  "%c PIHOLE-BYPASS-CARD %c v0.1.2 ",
   "color:white;background:#e63946;font-weight:bold;padding:2px 6px;border-radius:3px 0 0 3px",
   "color:#e63946;background:#1c1c1e;font-weight:bold;padding:2px 6px;border-radius:0 3px 3px 0"
 );

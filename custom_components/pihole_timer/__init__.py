@@ -20,7 +20,7 @@ _LOGGER = logging.getLogger(__name__)
 DOMAIN = "pihole_timer"
 STORAGE_KEY = f"{DOMAIN}.timers"
 STORAGE_VERSION = 1
-CARD_VERSION = "0.1.24"
+CARD_VERSION = "0.1.7"
 CARD_FILENAME = "pihole-bypass-card.js"
 CARD_RESOURCE_URL = f"/pihole_timer/{CARD_FILENAME}"
 LOVELACE_RESOURCES_STORAGE_KEY = "lovelace_resources"
@@ -363,15 +363,27 @@ class PiHoleBypassCoordinator:
     async def _restore_client_groups(
         self, client_ip: str, original_groups: list[int]
     ) -> None:
-        if await self.set_client_groups(client_ip, original_groups):
+        success = await self.set_client_groups(client_ip, original_groups)
+        if success:
             self._active_timers.pop(client_ip, None)
             self._timer_data.pop(client_ip, None)
             await self._save_timers()
+            # Refresh client cache so subsequent calls see the restored groups
+            try:
+                await self.get_clients()
+            except Exception:  # noqa: BLE001
+                pass
             self.hass.bus.async_fire(f"{DOMAIN}_bypass_expired", {
                 "client_ip": client_ip,
                 "restored_groups": original_groups,
             })
             _LOGGER.info("Groups restored for %s", client_ip)
+        else:
+            _LOGGER.error(
+                "Failed to restore groups for %s – will retry in 30 s", client_ip
+            )
+            # Reschedule a retry so the client doesn't stay bypassed permanently
+            self._schedule_restore(client_ip, original_groups, 30)
 
     async def deactivate_bypass(self, client_ip: str) -> bool:
         handle = self._active_timers.pop(client_ip, None)
