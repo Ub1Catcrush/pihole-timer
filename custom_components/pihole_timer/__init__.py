@@ -69,7 +69,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
 
 async def _async_ensure_lovelace_resource(hass: HomeAssistant) -> None:
-    """Write lovelace resource entry if not already present. Idempotent."""
+    """Ensure the lovelace resource entry exists and has the current version. Idempotent."""
     store = storage.Store(hass, 1, LOVELACE_RESOURCES_STORAGE_KEY)
     try:
         data = await store.async_load() or {}
@@ -78,32 +78,40 @@ async def _async_ensure_lovelace_resource(hass: HomeAssistant) -> None:
         return
 
     items: list[dict] = data.get("items", [])
+    target_url = f"{CARD_RESOURCE_URL}?v={CARD_VERSION}"
 
-    if any(CARD_RESOURCE_URL in item.get("url", "") for item in items):
-        _LOGGER.debug("PiHole card resource already present in lovelace_resources")
+    # Check if entry already exists WITH the correct version
+    if any(item.get("url") == target_url for item in items):
+        _LOGGER.debug("PiHole card resource already up-to-date: %s", target_url)
         return
 
-    items = [item for item in items if item.get("id") != f"{DOMAIN}_card"]
+    # Remove any stale entry for this card (wrong version or bare URL)
+    items = [item for item in items if item.get("id") != f"{DOMAIN}_card"
+             and CARD_RESOURCE_URL not in item.get("url", "")]
     items.append({
         "id": f"{DOMAIN}_card",
         "type": "module",
-        "url": f"{CARD_RESOURCE_URL}?v={CARD_VERSION}",
+        "url": target_url,
     })
     data["items"] = items
 
     try:
         await store.async_save(data)
         hass.bus.async_fire("lovelace_updated")
-        _LOGGER.info("PiHole card lovelace resource saved: %s", CARD_RESOURCE_URL)
+        _LOGGER.info("PiHole card lovelace resource updated to %s", target_url)
     except Exception as err:  # noqa: BLE001
         _LOGGER.error("Failed to save lovelace_resources: %s", err)
 
 
 async def _async_register_card(hass: HomeAssistant) -> None:
-    """Register the card JS as a static HTTP path and ensure the lovelace resource entry exists."""
+    """Register the card JS as a static HTTP path and ensure the lovelace resource entry exists.
+
+    The static path can only be registered once per HA process lifetime — attempting
+    to register the same URL a second time raises an error that we intentionally
+    ignore.  The Lovelace resource entry is always checked/updated so a version bump
+    takes effect after a plain integration reload without an HA restart.
+    """
     global _CARD_REGISTERED  # noqa: PLW0603
-    if _CARD_REGISTERED:
-        return
 
     # Locate the JS file inside custom_components/pihole_timer/www/
     js_path = pathlib.Path(__file__).parent / "www" / CARD_FILENAME
@@ -111,19 +119,23 @@ async def _async_register_card(hass: HomeAssistant) -> None:
         _LOGGER.error("Card JS not found at %s", js_path)
         return
 
-    # Register a static HTTP route so the file is reachable at CARD_RESOURCE_URL.
-    # This is the only reliable way for an integration-category HACS repo —
-    # HACS only serves /hacsfiles/ for plugin-category repos.
-    try:
-        await hass.http.async_register_static_paths(
-            [StaticPathConfig(CARD_RESOURCE_URL, str(js_path), cache_headers=False)]
-        )
-        _LOGGER.info("PiHole card static path registered: %s → %s", CARD_RESOURCE_URL, js_path)
-    except Exception as err:  # noqa: BLE001
-        _LOGGER.debug("Static path already registered (harmless on reload): %s", err)
+    if not _CARD_REGISTERED:
+        # Register a static HTTP route so the file is reachable at CARD_RESOURCE_URL.
+        # This is the only reliable way for an integration-category HACS repo —
+        # HACS only serves /hacsfiles/ for plugin-category repos.
+        # On reload the path is already registered; the exception is harmless.
+        try:
+            await hass.http.async_register_static_paths(
+                [StaticPathConfig(CARD_RESOURCE_URL, str(js_path), cache_headers=False)]
+            )
+            _LOGGER.info("PiHole card static path registered: %s → %s", CARD_RESOURCE_URL, js_path)
+        except Exception as err:  # noqa: BLE001
+            _LOGGER.debug("Static path already registered (harmless on reload): %s", err)
+        _CARD_REGISTERED = True
 
+    # Always run the resource check — this updates the ?v= cache-buster on every
+    # setup so a version bump takes effect after reload, not just after HA restart.
     await _async_ensure_lovelace_resource(hass)
-    _CARD_REGISTERED = True
 
 
 
