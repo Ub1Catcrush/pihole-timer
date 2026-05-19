@@ -20,9 +20,10 @@ _LOGGER = logging.getLogger(__name__)
 DOMAIN = "pihole_timer"
 STORAGE_KEY = f"{DOMAIN}.timers"
 STORAGE_VERSION = 1
-CARD_VERSION = "0.1.26"
+CARD_VERSION = "0.1.7"
 CARD_FILENAME = "pihole-bypass-card.js"
 CARD_RESOURCE_URL = f"/pihole_timer/{CARD_FILENAME}"
+BRANDS_URL = f"/api/brands/integration/{DOMAIN}"
 LOVELACE_RESOURCES_STORAGE_KEY = "lovelace_resources"
 
 # Track whether we already registered the static path / module URL this run
@@ -131,6 +132,22 @@ async def _async_register_card(hass: HomeAssistant) -> None:
             _LOGGER.info("PiHole card static path registered: %s → %s", CARD_RESOURCE_URL, js_path)
         except Exception as err:  # noqa: BLE001
             _LOGGER.debug("Static path already registered (harmless on reload): %s", err)
+
+        # Register brands/ folder under /api/brands/integration/pihole_timer/
+        # HA does NOT automatically serve custom component brands — we must register
+        # the static path ourselves so the integration page and HACS can load the icons.
+        brands_path = pathlib.Path(__file__).parent / "brands"
+        if brands_path.is_dir():
+            try:
+                await hass.http.async_register_static_paths(
+                    [StaticPathConfig(BRANDS_URL, str(brands_path), cache_headers=False)]
+                )
+                _LOGGER.info("PiHole brands path registered: %s → %s", BRANDS_URL, brands_path)
+            except Exception as err:  # noqa: BLE001
+                _LOGGER.debug("Brands path already registered (harmless on reload): %s", err)
+        else:
+            _LOGGER.warning("brands/ folder not found at %s", brands_path)
+
         _CARD_REGISTERED = True
 
     # Always run the resource check — this updates the ?v= cache-buster on every
