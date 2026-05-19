@@ -1,9 +1,6 @@
 name: Release
 
 on:
-  #push:
-  #  tags:
-  #    - "v*"
   workflow_dispatch:
 
 jobs:
@@ -19,113 +16,107 @@ jobs:
           token: ${{ secrets.GITHUB_TOKEN }}
           fetch-depth: 0
 
-      - name: Extract version from VERSION
-        id: get_version
+      # ── 1. Read version ────────────────────────────────────────────────────
+      - name: Extract version from VERSION file
+        id: ver
         run: |
-          # Suche nach dem Key, extrahiere den Wert nach dem Doppelpunkt und entferne Kommas/Leerzeichen
-          MAJOR=$(sed -n 's/.*versionMajor:\s*\([0-9]*\).*/\1/p' VERSION)
-          MINOR=$(sed -n 's/.*versionMinor:\s*\([0-9]*\).*/\1/p' VERSION)
-          PATCH=$(sed -n 's/.*versionPatch:\s*\([0-9]*\).*/\1/p' VERSION)
-      
-          # Validierung: Falls ein Wert leer ist, wird v0.0.0 als Fallback gesetzt
-          VERSION_NUM="${MAJOR:-0}.${MINOR:-0}.${PATCH:-0}"
-          VERSION_TAG="v${MAJOR:-0}.${MINOR:-0}.${PATCH:-0}"
-          
-          echo "VERSION_NUM=$VERSION_NUM" >> $GITHUB_ENV
-          echo "VERSION_TAG=$VERSION_TAG" >> $GITHUB_ENV
-          echo "num=$VERSION_NUM" >> $GITHUB_OUTPUT
-          echo "tag=$VERSION_TAG" >> $GITHUB_OUTPUT
+          V="$(cat VERSION | tr -d '[:space:]')"
+          if ! echo "$V" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+$'; then
+            echo "ERROR: VERSION file does not contain a valid semver string (got: '$V')"
+            exit 1
+          fi
+          echo "num=$V"         >> "$GITHUB_OUTPUT"
+          echo "tag=v$V"        >> "$GITHUB_OUTPUT"
+          echo "VERSION_NUM=$V" >> "$GITHUB_ENV"
+          echo "VERSION_TAG=v$V" >> "$GITHUB_ENV"
+          echo "Parsed version: $V"
 
-      - name: Create Release
-        id: create_release
-        uses: actions/create-release@v1.1.4
-        with:
-          tag_name: $VERSION_TAG
-          name: Release $VERSION_TAG
-          release_name: Release $VERSION_TAG
-          draft: false
-          prerelease: false
-
-      - name: Stamp version into all files
+      # ── 2. Stamp version into all source files ─────────────────────────────
+      - name: Stamp version into source files
         run: |
-          V="$VERSION_NUM"
+          V="${VERSION_NUM}"
 
-          # 1. VERSION file
-          #echo "$V" > VERSION
-
-          # 2. manifest.json
-          sed -i "s/\"version\": \".*\"/\"version\": \"${V}\"/" \
+          # manifest.json
+          sed -i "s/\"version\": \"[^\"]*\"/\"version\": \"${V}\"/" \
             custom_components/pihole_timer/manifest.json
 
-          # 3. __init__.py CARD_VERSION constant
-          sed -i "s/^CARD_VERSION = \".*\"/CARD_VERSION = \"$V\"/" \
+          # __init__.py  –  both the CARD_VERSION banner constant …
+          sed -i "s/^CARD_VERSION = \"[^\"]*\"/CARD_VERSION = \"${V}\"/" \
             custom_components/pihole_timer/__init__.py
 
-          # 4. Both card JS files (version string in console banner)
-          sed -i "s/v[0-9]\+\.[0-9]\+\.[0-9]\+/v$V/g" \
+          # … and any hardcoded semver strings inside the file
+          sed -i "s/v[0-9]\+\.[0-9]\+\.[0-9]\+/v${V}/g" \
+            custom_components/pihole_timer/__init__.py
+
+          # Card JS files (console banner)
+          sed -i "s/v[0-9]\+\.[0-9]\+\.[0-9]\+/v${V}/g" \
             custom_components/pihole_timer/www/pihole-bypass-card.js
-          sed -i "s/v[0-9]\+\.[0-9]\+\.[0-9]\+/v$V/g" \
+          sed -i "s/v[0-9]\+\.[0-9]\+\.[0-9]\+/v${V}/g" \
             www/pihole-bypass-card.js
 
-          # 5. Verify all files are consistent
+          # ── Verification ────────────────────────────────────────────────────
           echo "--- Verification ---"
-          echo "VERSION file:     $(cat VERSION)"
-          echo "manifest.json:    $(grep '\"version\"' custom_components/pihole_timer/manifest.json)"
-          echo "__init__.py:      $(grep '^CARD_VERSION' custom_components/pihole_timer/__init__.py)"
-          echo "JS (components):  $(grep 'PIHOLE-BYPASS-CARD' custom_components/pihole_timer/www/pihole-bypass-card.js | head -1)"
-          echo "JS (www):         $(grep 'PIHOLE-BYPASS-CARD' www/pihole-bypass-card.js | head -1)"
+          echo "VERSION file  : $(cat VERSION)"
+          echo "manifest.json : $(grep '\"version\"' custom_components/pihole_timer/manifest.json)"
+          echo "__init__.py   : $(grep '^CARD_VERSION' custom_components/pihole_timer/__init__.py)"
+          echo "JS (component): $(grep -i 'pihole-bypass-card' custom_components/pihole_timer/www/pihole-bypass-card.js | head -1)"
+          echo "JS (www)      : $(grep -i 'pihole-bypass-card' www/pihole-bypass-card.js | head -1)"
 
-          # Fail if any file still has a different version
           grep -q "\"version\": \"${V}\"" custom_components/pihole_timer/manifest.json \
-            || (echo "ERROR: manifest.json version mismatch!" && exit 1)
+            || { echo "ERROR: manifest.json version mismatch"; exit 1; }
           grep -q "^CARD_VERSION = \"${V}\"" custom_components/pihole_timer/__init__.py \
-            || (echo "ERROR: __init__.py CARD_VERSION mismatch!" && exit 1)
+            || { echo "ERROR: __init__.py CARD_VERSION mismatch"; exit 1; }
           grep -q "v${V}" custom_components/pihole_timer/www/pihole-bypass-card.js \
-            || (echo "ERROR: JS (custom_components) version mismatch!" && exit 1)
+            || { echo "ERROR: JS (custom_components) version mismatch"; exit 1; }
           grep -q "v${V}" www/pihole-bypass-card.js \
-            || (echo "ERROR: JS (www) version mismatch!" && exit 1)
-          echo "All files consistently stamped with $V"
+            || { echo "ERROR: JS (www) version mismatch"; exit 1; }
 
-#          V=${{ steps.ver.outputs.NUM }}
-      - name: Commit version bump back to repo
+          echo "All files consistently stamped with ${V}"
+
+      # ── 3. Commit version bump back ────────────────────────────────────────
+      - name: Commit version stamp
         run: |
-          V="$VERSION_NUM"
-
           git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-
           git add \
             VERSION \
             custom_components/pihole_timer/manifest.json \
             custom_components/pihole_timer/__init__.py \
             custom_components/pihole_timer/www/pihole-bypass-card.js \
             www/pihole-bypass-card.js
-
           if git diff --cached --quiet; then
-            echo "Nothing to commit (files already at $V)"
+            echo "Nothing to commit (all files already at ${VERSION_NUM})"
           else
-            git commit -m "chore: stamp version $V [skip ci]"
-            git push origin HEAD:$(git remote show origin | grep 'HEAD branch' | awk '{print $NF}')
-            echo "Version commit pushed"
+            git commit -m "chore: stamp version ${VERSION_NUM} [skip ci]"
+            DEFAULT_BRANCH="$(git remote show origin | awk '/HEAD branch/{print $NF}')"
+            git push origin "HEAD:${DEFAULT_BRANCH}"
+            echo "Version commit pushed to ${DEFAULT_BRANCH}"
           fi
 
+      # ── 4. Build zip ───────────────────────────────────────────────────────
       - name: Build release zip
         run: |
-          V="$VERSION_NUM"
-          zip -r pihole-bypass-v${V}.zip \
+          zip -r "pihole-bypass-${VERSION_TAG}.zip" \
             custom_components/ \
             www/ \
             icon.png \
+            dark_icon.png \
             VERSION \
             README.md \
             hacs.json \
-            -x "*.pyc" -x "__pycache__/*"
+            -x "*.pyc" \
+            -x "*/__pycache__/*" \
+            -x "*/.git/*"
 
-      - name: Publish GitHub Release
+      # ── 5. Create GitHub Release + attach zip ─────────────────────────────
+      - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          name: "PiHole Bypass v$VERSION_NUM"
-          files: pihole-bypass-v$VERSION_NUM.zip
+          tag_name: ${{ steps.ver.outputs.tag }}
+          name: "PiHole Bypass ${{ steps.ver.outputs.tag }}"
+          files: pihole-bypass-${{ steps.ver.outputs.tag }}.zip
           generate_release_notes: true
+          draft: false
+          prerelease: false
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
