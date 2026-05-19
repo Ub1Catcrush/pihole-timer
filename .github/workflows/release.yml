@@ -1,9 +1,9 @@
 name: Release
 
 on:
-  push:
-    tags:
-      - "v*"
+  #push:
+  #  tags:
+  #    - "v*"
   workflow_dispatch:
 
 jobs:
@@ -19,20 +19,39 @@ jobs:
           token: ${{ secrets.GITHUB_TOKEN }}
           fetch-depth: 0
 
-      - name: Extract version from tag
-        id: ver
+      - name: Extract version from VERSION
+        id: get_version
         run: |
-          NUM=${GITHUB_REF#refs/tags/v}
-          echo "NUM=$NUM" >> $GITHUB_OUTPUT
-          echo "TAG=v$NUM" >> $GITHUB_OUTPUT
-          echo "Releasing version $NUM"
+          # Suche nach dem Key, extrahiere den Wert nach dem Doppelpunkt und entferne Kommas/Leerzeichen
+          MAJOR=$(sed -n 's/.*versionMajor:\s*\([0-9]*\).*/\1/p' VERSION)
+          MINOR=$(sed -n 's/.*versionMinor:\s*\([0-9]*\).*/\1/p' VERSION)
+          PATCH=$(sed -n 's/.*versionPatch:\s*\([0-9]*\).*/\1/p' VERSION)
+      
+          # Validierung: Falls ein Wert leer ist, wird v0.0.0 als Fallback gesetzt
+          VERSION_NUM="${MAJOR:-0}.${MINOR:-0}.${PATCH:-0}"
+          VERSION_TAG="v${MAJOR:-0}.${MINOR:-0}.${PATCH:-0}"
+          
+          echo "VERSION_NUM=$VERSION_NUM" >> $GITHUB_ENV
+          echo "VERSION_TAG=$VERSION_TAG" >> $GITHUB_ENV
+          echo "num=$VERSION_NUM" >> $GITHUB_OUTPUT
+          echo "tag=$VERSION_TAG" >> $GITHUB_OUTPUT
+
+      - name: Create Release
+        id: create_release
+        uses: actions/create-release@v1.1.4
+        with:
+          tag_name: $VERSION_TAG
+          name: Release $VERSION_TAG
+          release_name: Release $VERSION_TAG
+          draft: false
+          prerelease: false
 
       - name: Stamp version into all files
         run: |
-          V=${{ steps.ver.outputs.NUM }}
+          V="$VERSION_NUM"
 
           # 1. VERSION file
-          echo "$V" > VERSION
+          #echo "$V" > VERSION
 
           # 2. manifest.json
           sed -i "s/\"version\": \".*\"/\"version\": \"${V}\"/" \
@@ -67,9 +86,10 @@ jobs:
             || (echo "ERROR: JS (www) version mismatch!" && exit 1)
           echo "All files consistently stamped with $V"
 
+#          V=${{ steps.ver.outputs.NUM }}
       - name: Commit version bump back to repo
         run: |
-          V=${{ steps.ver.outputs.NUM }}
+          V="$VERSION_NUM"
 
           git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
@@ -91,7 +111,7 @@ jobs:
 
       - name: Build release zip
         run: |
-          V=${{ steps.ver.outputs.NUM }}
+          V="$VERSION_NUM"
           zip -r pihole-bypass-v${V}.zip \
             custom_components/ \
             www/ \
@@ -104,8 +124,8 @@ jobs:
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          name: "PiHole Bypass v${{ steps.ver.outputs.NUM }}"
-          files: pihole-bypass-v${{ steps.ver.outputs.NUM }}.zip
+          name: "PiHole Bypass v$VERSION_NUM"
+          files: pihole-bypass-v$VERSION_NUM.zip
           generate_release_notes: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
