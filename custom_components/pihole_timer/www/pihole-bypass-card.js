@@ -290,12 +290,25 @@ class PiHoleBypassCard extends HTMLElement {
     return { favorites, others };
   }
 
-  // Returns favorite client objects (only those present in loaded clients)
+  // Returns favorite client objects (only those present in loaded clients).
+  // Each entry in favorite_clients can be an IP, MAC address, name, or comment.
   _getFavoriteClients() {
     if (!this._favoriteClients || this._favoriteClients.length === 0) return [];
     return this._favoriteClients
-      .map(ip => this._clients.find(c => c.ip === ip))
-      .filter(Boolean);
+      .map(query => {
+        const q = String(query).toLowerCase().trim();
+        return this._clients.find(c =>
+          c.ip.toLowerCase() === q ||
+          (c.name && c.name.toLowerCase() === q) ||
+          (c.comment && c.comment.toLowerCase() === q) ||
+          // partial match on name/comment for convenience
+          (c.name && c.name.toLowerCase().includes(q)) ||
+          (c.comment && c.comment.toLowerCase().includes(q))
+        );
+      })
+      .filter(Boolean)
+      // deduplicate (partial matches might resolve to same client)
+      .filter((c, i, arr) => arr.findIndex(x => x.ip === c.ip) === i);
   }
 
   _renderChip(g) {
@@ -429,15 +442,15 @@ class PiHoleBypassCard extends HTMLElement {
 
         /* Duration row — compact */
         .dur-row { display: flex; gap: 5px; align-items: stretch; }
-        .dur-wrap { flex: 0 0 70px; position: relative; }
+        .dur-wrap { flex: 0 0 80px; position: relative; }
         .dur-wrap input { padding-right: 32px; text-align: center; }
         .dur-unit {
           position: absolute; right: 8px; top: 50%; transform: translateY(-50%);
           font-size: 10px; color: var(--secondary-text-color, #9e9e9e); pointer-events: none;
         }
-        .quick-btns { display: flex; gap: 4px; flex: 1; }
+        .quick-btns { display: flex; gap: 3px; flex: 1; }
         .qbtn {
-          flex: 1; padding: 7px 4px; border-radius: 8px; cursor: pointer;
+          flex: 0 0 auto; padding: 7px 5px; min-width: 36px; border-radius: 8px; cursor: pointer;
           border: 1px solid var(--divider-color, rgba(255,255,255,.12));
           background: var(--secondary-background-color, rgba(255,255,255,.05));
           color: var(--secondary-text-color, #9e9e9e); font-size: 11px; font-weight: 700;
@@ -790,7 +803,7 @@ if (!window.customCards.find(c => c.type === "pihole-bypass-card")) {
 }
 
 console.info(
-  "%c PIHOLE-BYPASS-CARD %c v0.1.29 ",
+  "%c PIHOLE-BYPASS-CARD %c v0.2.0 ",
   "color:white;background:#e63946;font-weight:bold;padding:2px 6px;border-radius:3px 0 0 3px",
   "color:#e63946;background:#1c1c1e;font-weight:bold;padding:2px 6px;border-radius:0 3px 3px 0"
 );
