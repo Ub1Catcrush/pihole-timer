@@ -5,12 +5,14 @@ import logging
 import asyncio
 import aiohttp
 import pathlib
+import uuid
 from datetime import datetime, timedelta
 
 from homeassistant.core import HomeAssistant
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers import storage
+from homeassistant.helpers.event import async_track_time_interval
 from homeassistant.components.http import HomeAssistantView, StaticPathConfig
 from homeassistant.util import dt as dt_util
 from aiohttp import web
@@ -20,7 +22,9 @@ _LOGGER = logging.getLogger(__name__)
 DOMAIN = "pihole_timer"
 STORAGE_KEY = f"{DOMAIN}.timers"
 STORAGE_VERSION = 1
-CARD_VERSION = "0.1.30"
+SCHEDULE_STORAGE_KEY = f"{DOMAIN}.schedules"
+SCHEDULE_CHECK_INTERVAL = timedelta(minutes=1)
+CARD_VERSION = "0.1.31"
 CARD_FILENAME = "pihole-bypass-card.js"
 CARD_RESOURCE_URL = f"/pihole_timer/{CARD_FILENAME}"
 BRANDS_URL = f"/api/brands/integration/{DOMAIN}"
@@ -183,6 +187,13 @@ class PiHoleBypassCoordinator:
         self._timer_data: dict[str, dict] = {}
         self._client_cache: dict[str, dict] = {}
         self._sid: str | None = None
+        # Weekly schedules (recurring group assignments)
+        self._schedule_store = storage.Store(hass, STORAGE_VERSION, SCHEDULE_STORAGE_KEY)
+        self._schedules: list[dict] = []
+        # client_ip -> {"schedule_id": str, "original_groups": [int]}
+        self._schedule_state: dict[str, dict] = {}
+        self._schedule_unsub = None
+        self._schedule_lock = asyncio.Lock()
 
     @property
     def host(self) -> str:
@@ -253,19 +264,31 @@ class PiHoleBypassCoordinator:
 
     async def async_initialize(self) -> None:
         data = await self._store.async_load()
-        if not data:
-            return
-        now = dt_util.utcnow()
-        for client_ip, info in data.get("timers", {}).items():
-            end_time = datetime.fromisoformat(info["end_time"])
-            if end_time > now:
-                remaining = (end_time - now).total_seconds()
-                self._schedule_restore(client_ip, info["original_groups"], remaining)
-                self._timer_data[client_ip] = info
-            else:
-                await self._restore_client_groups(client_ip, info["original_groups"])
+        if data:
+            now = dt_util.utcnow()
+            for client_ip, info in data.get("timers", {}).items():
+                end_time = datetime.fromisoformat(info["end_time"])
+                if end_time > now:
+                    remaining = (end_time - now).total_seconds()
+                    self._schedule_restore(client_ip, info["original_groups"], remaining)
+                    self._timer_data[client_ip] = info
+                else:
+                    await self._restore_client_groups(client_ip, info["original_groups"])
+
+        sdata = await self._schedule_store.async_load() or {}
+        self._schedules = sdata.get("schedules", [])
+        self._schedule_state = sdata.get("state", {})
+
+        # Evaluate schedules every minute (and once right after startup).
+        self._schedule_unsub = async_track_time_interval(
+            self.hass, self._async_schedule_tick, SCHEDULE_CHECK_INTERVAL
+        )
+        self.hass.async_create_task(self.async_evaluate_schedules())
 
     async def async_cleanup(self) -> None:
+        if self._schedule_unsub:
+            self._schedule_unsub()
+            self._schedule_unsub = None
         for handle in self._active_timers.values():
             handle.cancel()
         self._active_timers.clear()
@@ -407,6 +430,7 @@ class PiHoleBypassCoordinator:
                 "restored_groups": original_groups,
             })
             _LOGGER.info("Groups restored for %s", client_ip)
+            await self.async_evaluate_schedules()
         else:
             _LOGGER.error(
                 "Failed to restore groups for %s – will retry in 30 s", client_ip
@@ -425,8 +449,178 @@ class PiHoleBypassCoordinator:
             self.hass.bus.async_fire(
                 f"{DOMAIN}_bypass_cancelled", {"client_ip": client_ip}
             )
+            await self.async_evaluate_schedules()
             return True
         return False
+
+    # ── Weekly schedules ───────────────────────────────────────────────────
+
+    @staticmethod
+    def _parse_hhmm(value: str) -> int:
+        """'14:30' -> minutes since midnight. Raises ValueError if invalid."""
+        h, m = str(value).split(":")[:2]
+        h, m = int(h), int(m)
+        if not (0 <= h <= 23 and 0 <= m <= 59):
+            raise ValueError(value)
+        return h * 60 + m
+
+    def _schedule_matches(self, sched: dict, now: datetime) -> bool:
+        """True if `now` (local time) lies inside the schedule's window.
+
+        Days are weekday numbers 0=Mon … 6=Sun and refer to the day on which the
+        window STARTS. A window whose end is earlier than its start (e.g.
+        22:00–06:00) runs over midnight into the following day.
+        """
+        try:
+            start = self._parse_hhmm(sched["start"])
+            end = self._parse_hhmm(sched["end"])
+        except (KeyError, ValueError):
+            return False
+        days = set(sched.get("days", []))
+        cur = now.hour * 60 + now.minute
+        today = now.weekday()
+        if start == end:
+            return False
+        if start < end:
+            return today in days and start <= cur < end
+        # overnight window
+        yesterday = (today - 1) % 7
+        return (today in days and cur >= start) or (yesterday in days and cur < end)
+
+    def get_schedules(self) -> list[dict]:
+        now = dt_util.now()
+        result = []
+        for s in self._schedules:
+            active = self._schedule_state.get(s["client_ip"], {}).get("schedule_id") == s["id"]
+            result.append({**s, "active": active, "in_window": self._schedule_matches(s, now)})
+        return result
+
+    async def _save_schedules(self) -> None:
+        await self._schedule_store.async_save(
+            {"schedules": self._schedules, "state": self._schedule_state}
+        )
+
+    def _validate_schedule(self, data: dict) -> dict:
+        client_ip = (data.get("client_ip") or "").strip()
+        if not client_ip:
+            raise ValueError("client_ip fehlt")
+        groups = [int(g) for g in data.get("groups", [])]
+        if not groups:
+            raise ValueError("Keine Gruppen gewählt")
+        days = sorted({int(d) for d in data.get("days", []) if 0 <= int(d) <= 6})
+        if not days:
+            raise ValueError("Keine Wochentage gewählt")
+        start, end = str(data.get("start", "")), str(data.get("end", ""))
+        if self._parse_hhmm(start) == self._parse_hhmm(end):
+            raise ValueError("Start und Ende dürfen nicht gleich sein")
+        return {
+            "client_ip": client_ip,
+            "groups": groups,
+            "days": days,
+            "start": f"{self._parse_hhmm(start) // 60:02d}:{self._parse_hhmm(start) % 60:02d}",
+            "end": f"{self._parse_hhmm(end) // 60:02d}:{self._parse_hhmm(end) % 60:02d}",
+            "enabled": bool(data.get("enabled", True)),
+        }
+
+    async def save_schedule(self, data: dict) -> dict:
+        """Create (no id) or update (id given) a schedule."""
+        fields = self._validate_schedule(data)
+        sid = data.get("id")
+        existing = next((s for s in self._schedules if s["id"] == sid), None) if sid else None
+        if existing:
+            existing.update(fields)
+            sched = existing
+        else:
+            sched = {"id": uuid.uuid4().hex[:8], **fields}
+            self._schedules.append(sched)
+        await self._save_schedules()
+        await self.async_evaluate_schedules()
+        return sched
+
+    async def delete_schedule(self, schedule_id: str) -> bool:
+        before = len(self._schedules)
+        self._schedules = [s for s in self._schedules if s["id"] != schedule_id]
+        if len(self._schedules) == before:
+            return False
+        await self._save_schedules()
+        await self.async_evaluate_schedules()
+        return True
+
+    async def set_schedule_enabled(self, schedule_id: str, enabled: bool) -> bool:
+        for s in self._schedules:
+            if s["id"] == schedule_id:
+                s["enabled"] = enabled
+                await self._save_schedules()
+                await self.async_evaluate_schedules()
+                return True
+        return False
+
+    async def _async_schedule_tick(self, _now=None) -> None:
+        await self.async_evaluate_schedules()
+
+    async def async_evaluate_schedules(self) -> None:
+        """Bring every scheduled client into the state its schedules demand.
+
+        - Inside a window  -> remember the client's groups once, apply schedule groups.
+        - Outside a window -> restore the remembered groups.
+        - A running manual bypass always wins; the client is skipped until it ends.
+        """
+        async with self._schedule_lock:
+            now = dt_util.now()
+            changed = False
+
+            # Every client that has a schedule or is currently schedule-managed
+            clients = {s["client_ip"] for s in self._schedules} | set(self._schedule_state)
+
+            for client_ip in clients:
+                if client_ip in self._timer_data:
+                    continue  # manual bypass active
+
+                active = next(
+                    (s for s in self._schedules
+                     if s["client_ip"] == client_ip and s.get("enabled", True)
+                     and self._schedule_matches(s, now)),
+                    None,
+                )
+                state = self._schedule_state.get(client_ip)
+
+                if active:
+                    if state and state["schedule_id"] == active["id"]:
+                        continue  # already applied
+                    original = (
+                        state["original_groups"] if state
+                        else await self.get_client_groups(client_ip)
+                    )
+                    if await self.set_client_groups(client_ip, active["groups"]):
+                        self._schedule_state[client_ip] = {
+                            "schedule_id": active["id"],
+                            "original_groups": original,
+                        }
+                        changed = True
+                        self.hass.bus.async_fire(f"{DOMAIN}_schedule_started", {
+                            "client_ip": client_ip,
+                            "schedule_id": active["id"],
+                            "groups": active["groups"],
+                        })
+                        _LOGGER.info("Schedule %s started for %s", active["id"], client_ip)
+                elif state:
+                    if await self.set_client_groups(client_ip, state["original_groups"]):
+                        self._schedule_state.pop(client_ip, None)
+                        changed = True
+                        self.hass.bus.async_fire(f"{DOMAIN}_schedule_ended", {
+                            "client_ip": client_ip,
+                            "restored_groups": state["original_groups"],
+                        })
+                        _LOGGER.info("Schedule ended for %s, groups restored", client_ip)
+                    else:
+                        _LOGGER.error("Failed to restore groups for %s – retry next minute", client_ip)
+
+            if changed:
+                await self._save_schedules()
+                try:
+                    await self.get_clients()
+                except Exception:  # noqa: BLE001
+                    pass
 
     async def get_active_timers(self) -> dict:
         now = dt_util.utcnow()
@@ -478,6 +672,8 @@ class PiHoleBypassView(HomeAssistantView):
             return self.json({"groups": await coordinator.get_groups()})
         if action == "timers":
             return self.json({"timers": await coordinator.get_active_timers()})
+        if action == "schedules":
+            return self.json({"schedules": coordinator.get_schedules()})
         return self.json_message("Unknown action", status_code=404)
 
     async def post(self, request: web.Request, action: str) -> web.Response:
@@ -502,6 +698,20 @@ class PiHoleBypassView(HomeAssistantView):
             ok = await coordinator.update_client(
                 client_ip=data.get("client_ip"),
                 comment=data.get("comment", ""),
+            )
+            return self.json({"success": ok})
+        if action == "schedule_save":
+            try:
+                sched = await coordinator.save_schedule(data)
+            except (ValueError, TypeError) as err:
+                return self.json({"success": False, "error": str(err)}, status_code=400)
+            return self.json({"success": True, "schedule": sched})
+        if action == "schedule_delete":
+            ok = await coordinator.delete_schedule(data.get("id"))
+            return self.json({"success": ok})
+        if action == "schedule_toggle":
+            ok = await coordinator.set_schedule_enabled(
+                data.get("id"), bool(data.get("enabled", True))
             )
             return self.json({"success": ok})
         return self.json_message("Unknown action", status_code=404)

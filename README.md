@@ -19,6 +19,7 @@ Eine Home Assistant Custom Integration mit Lovelace Card zum **temporären Umgeh
 - 🎛️ **Flexible Dauer** – 1–1440 Minuten, Schnell-Buttons für 5/10/30/60 min
 - 👥 **Mehrere Gruppen** – Mehrere Zielgruppen gleichzeitig auswählbar
 - ❌ **Manueller Abbruch** – Timer kann jederzeit beendet werden
+- 🗓️ **Zeitpläne** – Wiederkehrende Gruppenzuweisung nach Wochentag und Uhrzeit (z.B. PC01 Mo–Fr 14:30–19:00)
 - 🔔 **HA Events** – Feuert Events für Automatisierungen
 
 > **Voraussetzung:** PiHole **v6+** (neue REST API)
@@ -128,6 +129,25 @@ default_groups:
 
 ---
 
+## 🗓️ Zeitpläne
+
+Mit Zeitplänen wird einem Client zu festen Zeiten automatisch eine andere Gruppenzuweisung gegeben – z.B. **PC01 jeden Werktag von 14:30 bis 19:00 in den Gruppen „Spielzeit"**.
+
+1. In der Karte oben **Client** und **Gruppen** wählen (das sind die Gruppen, die *während* des Zeitfensters gelten)
+2. Unten **🗓️ Zeitpläne** aufklappen
+3. **Wochentage** und **Start/Ende** einstellen → **Zeitplan speichern**
+
+Verhalten:
+
+- Beim Start des Zeitfensters werden die ursprünglichen Gruppen des Clients gemerkt und die Zeitplan-Gruppen gesetzt; am Ende werden die ursprünglichen Gruppen wiederhergestellt.
+- Prüfung jede Minute (Zeitzone von Home Assistant). Der Zustand überlebt einen HA-Neustart.
+- Ende vor Start (z.B. 22:00–06:00) = Fenster läuft über Mitternacht; der Wochentag gilt für den Starttag.
+- Ein **manueller Bypass hat Vorrang**: Solange er läuft, ruhen die Zeitpläne des Clients und werden danach wieder angewendet.
+- Pro Client gilt bei Überschneidungen der zuerst angelegte aktive Zeitplan.
+- Zeitpläne lassen sich pausieren (⏸) und löschen (🗑).
+
+---
+
 ## 🔔 Events & Automatisierungen
 
 Die Integration feuert folgende HA-Events:
@@ -137,6 +157,8 @@ Die Integration feuert folgende HA-Events:
 | `pihole_timer_bypass_activated` | Bypass gestartet | `client_ip`, `groups`, `end_time` |
 | `pihole_timer_bypass_expired` | Timer abgelaufen | `client_ip`, `restored_groups` |
 | `pihole_timer_bypass_cancelled` | Manuell abgebrochen | `client_ip` |
+| `pihole_timer_schedule_started` | Zeitfenster beginnt | `client_ip`, `schedule_id`, `groups` |
+| `pihole_timer_schedule_ended` | Zeitfenster endet | `client_ip`, `restored_groups` |
 
 **Beispiel-Automatisierung:**
 

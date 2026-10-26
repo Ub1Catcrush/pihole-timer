@@ -23,6 +23,13 @@ class PiHoleBypassCard extends HTMLElement {
     this._timerInterval = null;
     this._initialized = false;
     this._groupsExpanded = false;
+    // Schedules
+    this._schedules = [];
+    this._schedExpanded = false;
+    this._schedDays = [0, 1, 2, 3, 4]; // Mon–Fri
+    this._schedStart = "14:30";
+    this._schedEnd = "19:00";
+    this._schedError = "";
   }
 
   set hass(hass) {
@@ -84,10 +91,11 @@ class PiHoleBypassCard extends HTMLElement {
     this._error = "";
     this._render();
 
-    const [clientsResult, groupsResult, timersResult] = await Promise.allSettled([
+    const [clientsResult, groupsResult, timersResult, schedulesResult] = await Promise.allSettled([
       this._apiGet("clients"),
       this._apiGet("groups"),
       this._apiGet("timers"),
+      this._apiGet("schedules"),
     ]);
 
     const errors = [];
@@ -124,6 +132,10 @@ class PiHoleBypassCard extends HTMLElement {
       this._activeTimers = timersResult.value?.timers ?? {};
     } else {
       this._activeTimers = {};
+    }
+
+    if (schedulesResult.status === "fulfilled") {
+      this._schedules = schedulesResult.value?.schedules ?? [];
     }
 
     this._error = errors.join(" | ");
@@ -203,6 +215,67 @@ class PiHoleBypassCard extends HTMLElement {
       this._loading = false;
       this._render();
     }
+  }
+
+  async _saveSchedule() {
+    this._schedError = "";
+    if (!this._selectedClient) { this._schedError = "Bitte oben einen Client wählen."; this._render(); return; }
+    if (this._selectedGroups.length === 0) { this._schedError = "Bitte oben mindestens eine Gruppe wählen."; this._render(); return; }
+    if (this._schedDays.length === 0) { this._schedError = "Bitte mindestens einen Wochentag wählen."; this._render(); return; }
+    if (this._schedStart === this._schedEnd) { this._schedError = "Start und Ende dürfen nicht gleich sein."; this._render(); return; }
+    try {
+      await this._apiPost("schedule_save", {
+        client_ip: this._selectedClient,
+        groups: this._selectedGroups,
+        days: this._schedDays,
+        start: this._schedStart,
+        end: this._schedEnd,
+      });
+      await this._loadData();
+    } catch (e) {
+      this._schedError = `Fehler: ${e.message}`;
+      this._render();
+    }
+  }
+
+  async _deleteSchedule(id) {
+    try {
+      await this._apiPost("schedule_delete", { id });
+      await this._loadData();
+    } catch (e) {
+      this._schedError = `Fehler: ${e.message}`;
+      this._render();
+    }
+  }
+
+  async _toggleSchedule(id, enabled) {
+    try {
+      await this._apiPost("schedule_toggle", { id, enabled });
+      await this._loadData();
+    } catch (e) {
+      this._schedError = `Fehler: ${e.message}`;
+      this._render();
+    }
+  }
+
+  _toggleSchedDay(d) {
+    this._schedDays = this._schedDays.includes(d)
+      ? this._schedDays.filter(x => x !== d)
+      : [...this._schedDays, d].sort();
+    this._render();
+  }
+
+  _fmtDays(days) {
+    const names = ["Mo", "Di", "Mi", "Do", "Fr", "Sa", "So"];
+    const key = [...days].sort().join(",");
+    if (key === "0,1,2,3,4") return "Mo–Fr";
+    if (key === "5,6") return "Sa–So";
+    if (key === "0,1,2,3,4,5,6") return "täglich";
+    return [...days].sort().map(d => names[d]).join(", ");
+  }
+
+  _groupNames(ids) {
+    return ids.map(id => this._groups.find(g => g.id === id)?.name ?? `#${id}`).join(", ");
   }
 
   async _cancelBypass(clientIp) {
@@ -524,6 +597,47 @@ class PiHoleBypassCard extends HTMLElement {
         .row-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px; }
         .divider { height: 1px; background: var(--divider-color, rgba(255,255,255,.07)); }
 
+        /* Schedules */
+        .sched-item {
+          display: flex; align-items: center; gap: 8px; padding: 7px 9px; border-radius: 8px;
+          border: 1px solid var(--divider-color, rgba(255,255,255,.12));
+          background: var(--secondary-background-color, rgba(255,255,255,.04));
+          margin-bottom: 5px; font-size: 11px;
+        }
+        .sched-item.active { border-color: #e63946; background: rgba(230,57,70,.1); }
+        .sched-item.off { opacity: .5; }
+        .sched-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+        .sched-title { font-weight: 700; color: var(--primary-text-color,#fff); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .sched-sub { color: var(--secondary-text-color,#9e9e9e); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .sched-btn {
+          background: none; border: 1px solid var(--divider-color, rgba(255,255,255,.2));
+          border-radius: 6px; padding: 3px 7px; cursor: pointer; font-size: 12px;
+          color: var(--primary-text-color,#fff);
+        }
+        .sched-btn:hover { border-color: #e63946; color: #e63946; }
+        .day-row { display: flex; gap: 4px; margin-bottom: 6px; }
+        .day-chip {
+          flex: 1; padding: 6px 0; text-align: center; border-radius: 7px; cursor: pointer; user-select: none;
+          border: 1.5px solid var(--divider-color, rgba(255,255,255,.12));
+          background: var(--secondary-background-color, rgba(255,255,255,.04));
+          color: var(--secondary-text-color,#9e9e9e); font-size: 11px; font-weight: 700;
+        }
+        .day-chip.on { border-color: #e63946; background: rgba(230,57,70,.15); color: #e63946; }
+        .time-row { display: flex; gap: 8px; align-items: center; margin-bottom: 8px; }
+        .time-row input[type="time"] {
+          flex: 1; padding: 7px 10px; border-radius: 8px; font-size: 13px; outline: none;
+          border: 1px solid var(--divider-color, rgba(255,255,255,.12));
+          background: var(--secondary-background-color, rgba(255,255,255,.05));
+          color: var(--primary-text-color, #fff);
+        }
+        .time-row span { color: var(--secondary-text-color,#9e9e9e); font-size: 12px; }
+        .btn-sched-save {
+          width: 100%; padding: 9px; border-radius: 9px; cursor: pointer; font-size: 12px; font-weight: 700;
+          border: 1.5px solid #e63946; background: rgba(230,57,70,.1); color: #e63946;
+        }
+        .btn-sched-save:hover { background: rgba(230,57,70,.2); }
+        .sched-hint { font-size: 10px; color: var(--secondary-text-color,#9e9e9e); margin: 2px 0 8px; }
+
         /* Separator between fav and other groups */
         .groups-sep { height: 1px; background: var(--divider-color, rgba(255,255,255,.07)); margin: 4px 0; }
       </style>
@@ -669,6 +783,46 @@ class PiHoleBypassCard extends HTMLElement {
               : `🛡️ Bypass aktivieren (${this._duration} Min)`}
           </button>
 
+          <div class="divider"></div>
+
+          <!-- Schedules -->
+          <div>
+            <button class="more-toggle${this._schedExpanded ? " open" : ""}" id="schedToggleBtn">
+              <span class="toggle-arrow">▼</span>
+              <span>🗓️ Zeitpläne (${this._schedules.length})</span>
+            </button>
+            ${this._schedExpanded ? `
+              <div class="other-groups">
+                ${this._schedules.length === 0
+                  ? '<div class="empty">Keine Zeitpläne vorhanden</div>'
+                  : this._schedules.map(sc => `
+                    <div class="sched-item${sc.active ? " active" : ""}${sc.enabled === false ? " off" : ""}">
+                      <div class="sched-main">
+                        <span class="sched-title">${sc.active ? "● " : ""}${this._clientName(sc.client_ip)} · ${this._fmtDays(sc.days)} ${sc.start}–${sc.end}</span>
+                        <span class="sched-sub">→ ${this._groupNames(sc.groups)}</span>
+                      </div>
+                      <button class="sched-btn" data-sched-toggle="${sc.id}" data-enabled="${sc.enabled === false ? "1" : "0"}"
+                        title="${sc.enabled === false ? "Aktivieren" : "Pausieren"}">${sc.enabled === false ? "▶" : "⏸"}</button>
+                      <button class="sched-btn" data-sched-del="${sc.id}" title="Löschen">🗑</button>
+                    </div>`).join("")}
+
+                <div class="groups-sep"></div>
+                <div class="label">Neuer Zeitplan (Client + Gruppen von oben)</div>
+                <div class="day-row">
+                  ${["Mo", "Di", "Mi", "Do", "Fr", "Sa", "So"].map((n, i) =>
+                    `<div class="day-chip${this._schedDays.includes(i) ? " on" : ""}" data-day="${i}">${n}</div>`).join("")}
+                </div>
+                <div class="time-row">
+                  <input type="time" id="schedStart" value="${this._schedStart}">
+                  <span>bis</span>
+                  <input type="time" id="schedEnd" value="${this._schedEnd}">
+                </div>
+                <div class="sched-hint">Ende vor Start = über Mitternacht. Ein manueller Bypass hat Vorrang.</div>
+                ${this._schedError ? `<div class="error">⚠️ <span>${this._schedError}</span></div>` : ""}
+                <button class="btn-sched-save" id="schedSaveBtn">＋ Zeitplan speichern</button>
+              </div>` : ""}
+          </div>
+
         </div>
       </ha-card>
     `;
@@ -728,6 +882,24 @@ class PiHoleBypassCard extends HTMLElement {
       this._groupsExpanded = !this._groupsExpanded;
       this._render();
     });
+
+    // Schedules
+    this.shadowRoot.getElementById("schedToggleBtn")?.addEventListener("click", () => {
+      this._schedExpanded = !this._schedExpanded;
+      this._render();
+    });
+    this.shadowRoot.querySelectorAll(".day-chip").forEach(el =>
+      el.addEventListener("click", () => this._toggleSchedDay(parseInt(el.dataset.day)))
+    );
+    this.shadowRoot.getElementById("schedStart")?.addEventListener("input", e => { this._schedStart = e.target.value; });
+    this.shadowRoot.getElementById("schedEnd")?.addEventListener("input", e => { this._schedEnd = e.target.value; });
+    this.shadowRoot.getElementById("schedSaveBtn")?.addEventListener("click", () => this._saveSchedule());
+    this.shadowRoot.querySelectorAll("[data-sched-del]").forEach(b =>
+      b.addEventListener("click", () => this._deleteSchedule(b.dataset.schedDel))
+    );
+    this.shadowRoot.querySelectorAll("[data-sched-toggle]").forEach(b =>
+      b.addEventListener("click", () => this._toggleSchedule(b.dataset.schedToggle, b.dataset.enabled === "1"))
+    );
 
     // Timer cancel + extend
     this.shadowRoot.querySelectorAll(".btn-cancel").forEach(btn =>
@@ -803,7 +975,7 @@ if (!window.customCards.find(c => c.type === "pihole-bypass-card")) {
 }
 
 console.info(
-  "%c PIHOLE-BYPASS-CARD %c v0.1.30 ",
+  "%c PIHOLE-BYPASS-CARD %c v0.1.31 ",
   "color:white;background:#e63946;font-weight:bold;padding:2px 6px;border-radius:3px 0 0 3px",
   "color:#e63946;background:#1c1c1e;font-weight:bold;padding:2px 6px;border-radius:0 3px 3px 0"
 );
