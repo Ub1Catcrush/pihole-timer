@@ -30,6 +30,7 @@ class PiHoleBypassCard extends HTMLElement {
     this._schedStart = "14:30";
     this._schedEnd = "19:00";
     this._schedError = "";
+    this._editingSchedule = null; // id of the schedule being edited
   }
 
   set hass(hass) {
@@ -225,12 +226,14 @@ class PiHoleBypassCard extends HTMLElement {
     if (this._schedStart === this._schedEnd) { this._schedError = "Start und Ende dürfen nicht gleich sein."; this._render(); return; }
     try {
       await this._apiPost("schedule_save", {
+        ...(this._editingSchedule ? { id: this._editingSchedule } : {}),
         client_ip: this._selectedClient,
         groups: this._selectedGroups,
         days: this._schedDays,
         start: this._schedStart,
         end: this._schedEnd,
       });
+      this._editingSchedule = null;
       await this._loadData();
     } catch (e) {
       this._schedError = `Fehler: ${e.message}`;
@@ -238,7 +241,29 @@ class PiHoleBypassCard extends HTMLElement {
     }
   }
 
+  _editSchedule(id) {
+    const sc = this._schedules.find(x => x.id === id);
+    if (!sc) return;
+    this._editingSchedule = id;
+    this._selectedClient = sc.client_ip;
+    this._selectedGroups = [...sc.groups];
+    this._editComment = this._clients.find(c => c.ip === sc.client_ip)?.comment ?? "";
+    this._schedDays = [...sc.days];
+    this._schedStart = sc.start;
+    this._schedEnd = sc.end;
+    this._schedExpanded = true;
+    this._schedError = "";
+    this._render();
+  }
+
+  _cancelEditSchedule() {
+    this._editingSchedule = null;
+    this._schedError = "";
+    this._render();
+  }
+
   async _deleteSchedule(id) {
+    if (this._editingSchedule === id) this._editingSchedule = null;
     try {
       await this._apiPost("schedule_delete", { id });
       await this._loadData();
@@ -606,6 +631,7 @@ class PiHoleBypassCard extends HTMLElement {
         }
         .sched-item.active { border-color: #e63946; background: rgba(230,57,70,.1); }
         .sched-item.off { opacity: .5; }
+        .sched-item.editing { border-style: dashed; border-color: #e63946; }
         .sched-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
         .sched-title { font-weight: 700; color: var(--primary-text-color,#fff); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
         .sched-sub { color: var(--secondary-text-color,#9e9e9e); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -796,18 +822,19 @@ class PiHoleBypassCard extends HTMLElement {
                 ${this._schedules.length === 0
                   ? '<div class="empty">Keine Zeitpläne vorhanden</div>'
                   : this._schedules.map(sc => `
-                    <div class="sched-item${sc.active ? " active" : ""}${sc.enabled === false ? " off" : ""}">
+                    <div class="sched-item${sc.active ? " active" : ""}${sc.enabled === false ? " off" : ""}${sc.id === this._editingSchedule ? " editing" : ""}">
                       <div class="sched-main">
                         <span class="sched-title">${sc.active ? "● " : ""}${this._clientName(sc.client_ip)} · ${this._fmtDays(sc.days)} ${sc.start}–${sc.end}</span>
                         <span class="sched-sub">→ ${this._groupNames(sc.groups)}</span>
                       </div>
                       <button class="sched-btn" data-sched-toggle="${sc.id}" data-enabled="${sc.enabled === false ? "1" : "0"}"
                         title="${sc.enabled === false ? "Aktivieren" : "Pausieren"}">${sc.enabled === false ? "▶" : "⏸"}</button>
+                      <button class="sched-btn" data-sched-edit="${sc.id}" title="Bearbeiten">✏️</button>
                       <button class="sched-btn" data-sched-del="${sc.id}" title="Löschen">🗑</button>
                     </div>`).join("")}
 
                 <div class="groups-sep"></div>
-                <div class="label">Neuer Zeitplan (Client + Gruppen von oben)</div>
+                <div class="label">${this._editingSchedule ? "Zeitplan bearbeiten (Client + Gruppen von oben)" : "Neuer Zeitplan (Client + Gruppen von oben)"}</div>
                 <div class="day-row">
                   ${["Mo", "Di", "Mi", "Do", "Fr", "Sa", "So"].map((n, i) =>
                     `<div class="day-chip${this._schedDays.includes(i) ? " on" : ""}" data-day="${i}">${n}</div>`).join("")}
@@ -819,7 +846,10 @@ class PiHoleBypassCard extends HTMLElement {
                 </div>
                 <div class="sched-hint">Ende vor Start = über Mitternacht. Ein manueller Bypass hat Vorrang.</div>
                 ${this._schedError ? `<div class="error">⚠️ <span>${this._schedError}</span></div>` : ""}
-                <button class="btn-sched-save" id="schedSaveBtn">＋ Zeitplan speichern</button>
+                <div style="display:flex;gap:6px">
+                  <button class="btn-sched-save" id="schedSaveBtn">${this._editingSchedule ? "💾 Änderungen speichern" : "＋ Zeitplan speichern"}</button>
+                  ${this._editingSchedule ? '<button class="btn-sched-save" id="schedCancelBtn" style="flex:0 0 auto;width:auto;padding:9px 14px;border-color:var(--divider-color,rgba(255,255,255,.2));color:var(--secondary-text-color,#9e9e9e);background:transparent">Abbrechen</button>' : ""}
+                </div>
               </div>` : ""}
           </div>
 
@@ -894,6 +924,10 @@ class PiHoleBypassCard extends HTMLElement {
     this.shadowRoot.getElementById("schedStart")?.addEventListener("input", e => { this._schedStart = e.target.value; });
     this.shadowRoot.getElementById("schedEnd")?.addEventListener("input", e => { this._schedEnd = e.target.value; });
     this.shadowRoot.getElementById("schedSaveBtn")?.addEventListener("click", () => this._saveSchedule());
+    this.shadowRoot.getElementById("schedCancelBtn")?.addEventListener("click", () => this._cancelEditSchedule());
+    this.shadowRoot.querySelectorAll("[data-sched-edit]").forEach(b =>
+      b.addEventListener("click", () => this._editSchedule(b.dataset.schedEdit))
+    );
     this.shadowRoot.querySelectorAll("[data-sched-del]").forEach(b =>
       b.addEventListener("click", () => this._deleteSchedule(b.dataset.schedDel))
     );
@@ -975,7 +1009,7 @@ if (!window.customCards.find(c => c.type === "pihole-bypass-card")) {
 }
 
 console.info(
-  "%c PIHOLE-BYPASS-CARD %c v0.1.31 ",
+  "%c PIHOLE-BYPASS-CARD %c v0.1.32 ",
   "color:white;background:#e63946;font-weight:bold;padding:2px 6px;border-radius:3px 0 0 3px",
   "color:#e63946;background:#1c1c1e;font-weight:bold;padding:2px 6px;border-radius:0 3px 3px 0"
 );

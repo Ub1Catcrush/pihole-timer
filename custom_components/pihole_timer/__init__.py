@@ -24,7 +24,7 @@ STORAGE_KEY = f"{DOMAIN}.timers"
 STORAGE_VERSION = 1
 SCHEDULE_STORAGE_KEY = f"{DOMAIN}.schedules"
 SCHEDULE_CHECK_INTERVAL = timedelta(minutes=1)
-CARD_VERSION = "0.1.31"
+CARD_VERSION = "0.1.32"
 CARD_FILENAME = "pihole-bypass-card.js"
 CARD_RESOURCE_URL = f"/pihole_timer/{CARD_FILENAME}"
 BRANDS_URL = f"/api/brands/integration/{DOMAIN}"
@@ -585,8 +585,12 @@ class PiHoleBypassCoordinator:
                 state = self._schedule_state.get(client_ip)
 
                 if active:
-                    if state and state["schedule_id"] == active["id"]:
-                        continue  # already applied
+                    if (
+                        state
+                        and state["schedule_id"] == active["id"]
+                        and state.get("groups", active["groups"]) == active["groups"]
+                    ):
+                        continue  # already applied (and unchanged since an edit)
                     original = (
                         state["original_groups"] if state
                         else await self.get_client_groups(client_ip)
@@ -594,6 +598,7 @@ class PiHoleBypassCoordinator:
                     if await self.set_client_groups(client_ip, active["groups"]):
                         self._schedule_state[client_ip] = {
                             "schedule_id": active["id"],
+                            "groups": list(active["groups"]),
                             "original_groups": original,
                         }
                         changed = True

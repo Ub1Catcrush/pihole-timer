@@ -144,7 +144,7 @@ Verhalten:
 - Ende vor Start (z.B. 22:00–06:00) = Fenster läuft über Mitternacht; der Wochentag gilt für den Starttag.
 - Ein **manueller Bypass hat Vorrang**: Solange er läuft, ruhen die Zeitpläne des Clients und werden danach wieder angewendet.
 - Pro Client gilt bei Überschneidungen der zuerst angelegte aktive Zeitplan.
-- Zeitpläne lassen sich pausieren (⏸) und löschen (🗑).
+- Zeitpläne lassen sich bearbeiten (✏️), pausieren (⏸) und löschen (🗑). Beim Bearbeiten werden Client, Gruppen, Tage und Zeiten ins Formular geladen; Änderungen an einem gerade laufenden Zeitplan greifen innerhalb einer Minute.
 
 ---
 
